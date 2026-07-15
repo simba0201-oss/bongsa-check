@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>봉사활동 확인서 ↔ 나이스 대조</title>
+<!-- 외부 라이브러리 (CDN에서 불러옴 — 라이브러리 다운로드 외에 데이터는 절대 밖으로 나가지 않음) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<style>
+  body{font-family:'Malgun Gothic',sans-serif;margin:0;background:#f4f6f8;color:#222}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  h1{font-size:20px}
+  .step{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;margin-bottom:16px}
+  .step h2{font-size:16px;margin-top:0}
+  .drop{border:2px dashed #aaa;border-radius:8px;padding:14px;text-align:center;margin:8px 0;background:#fafafa}
+  .drop.ok{border-color:#2e7d32;background:#e8f5e9}
+  button{background:#1565c0;color:#fff;border:none;border-radius:6px;padding:10px 18px;font-size:14px;cursor:pointer}
+  button:disabled{background:#aaa;cursor:default}
+  button.sub{background:#607d8b;padding:5px 10px;font-size:12px}
+  .card{display:flex;gap:12px;border:1px solid #ccc;border-radius:8px;padding:12px;margin-bottom:14px;background:#fff}
+  .card img{width:44%;border:1px solid #ddd;cursor:zoom-in;align-self:flex-start}
+  .card img.big{width:95%;cursor:zoom-out}
+  .card pre{width:44%;border:1px solid #ddd;overflow:auto;font-size:11px;max-height:420px;white-space:pre-wrap;margin:0;padding:6px;align-self:flex-start;background:#fafafa}
+  .card .form{flex:1;min-width:0}
+  .card label{display:block;font-size:12px;color:#555;margin-top:8px}
+  .card input[type=text],.card input[type=number],.card select{width:95%;padding:6px;border:1px solid #bbb;border-radius:4px;font-size:14px}
+  .roster{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin-top:6px;max-height:260px;overflow-y:auto;border:1px solid #eee;padding:6px}
+  .roster label{display:flex;align-items:center;gap:4px;font-size:13px;margin:0;color:#222}
+  .hint{font-size:12px;color:#1565c0;margin-top:6px}
+  .warn{color:#c62828}
+  .excl{opacity:.45}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid #ccc;padding:5px 8px;text-align:left}
+  th{background:#eceff1}
+  tr.bad td{background:#ffebee}
+  tr.okrow td{background:#f1f8e9}
+  .chip{display:inline-block;border-radius:12px;padding:3px 10px;font-size:12px;margin:2px;background:#eee}
+  .chip.bad{background:#ffcdd2}
+  #status{font-size:13px;color:#555;margin-top:8px;white-space:pre-line}
+  .note{font-size:12px;color:#777}
+  .notice{background:#fff8e1;border:1px solid #ffca28;border-radius:6px;padding:8px 12px;font-size:13px;margin:8px 0;line-height:1.6}
+  details.guide{background:#e3f2fd;border:1px solid #90caf9;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:14px;line-height:1.7}
+  details.guide summary{cursor:pointer;font-weight:bold;font-size:15px}
+  details.guide h3{font-size:14px;margin:12px 0 4px;color:#0d47a1}
+  details.guide ol,details.guide ul{margin:4px 0;padding-left:22px}
+  details.guide li{margin:3px 0}
+  .must{background:#ffebee;border-radius:4px;padding:1px 5px;color:#b71c1c;font-weight:bold}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>봉사활동 확인서 ↔ 나이스 대조 프로그램</h1>
+<p class="note">모든 처리는 이 브라우저 안에서만 이루어집니다(개인정보 외부 전송 없음). 한글(HWP)에서 바로 변환한 PDF·엑셀 파일은 글자를 그대로 정확하게 읽고, 스캔본은 <b>글자 인식(OCR)</b> — 사진 속 글자를 컴퓨터가 읽어내는 기술 — 으로 처리합니다(스캔본이 있을 때만 첫 실행 시 인터넷 필요).</p>
+
+<details class="guide">
+<summary>📖 사용법 · 유의사항 (처음 사용 전 꼭 읽어 주세요)</summary>
+
+<h3>무엇을 하는 프로그램인가요?</h3>
+봉사활동 확인서(PDF·엑셀)와 나이스 입력 결과(엑셀)를 자동으로 비교해서, 빠졌거나 잘못 입력된 부분만 찾아 줍니다.
+연간 계획서를 넣으면 계획대로 다 입력됐는지도 함께 점검합니다.
+
+<h3>사용 순서</h3>
+<ol>
+<li><b>파일 선택</b> — ① 나이스 엑셀: 나이스 → 학생부 → 항목별 조회 → <b>봉사활동상황(현재학년)</b> 다운로드 파일 그대로(편집 금지)
+② 확인서: 스캔한 PDF, 한글에서 PDF로 저장한 파일, 엑셀 파일 모두 가능(여러 개 가능)
+③ (선택) 연간 계획서 PDF 첨부 또는 계획 직접 입력</li>
+<li><b>[파일 읽기 시작]</b> 클릭 — 자동으로 내용을 읽습니다. 스캔본은 글자 인식 때문에 페이지당 몇 초, 첫 실행은 1~2분 걸립니다.</li>
+<li><b>2단계 확인</b> — 페이지마다 원본(이미지 또는 표 내용)과 읽어낸 내용(날짜·활동·시간·참가자)이 맞는지 비교하고 다르면 고칩니다.
+<span class="must">가장 중요!</span> 비고란에 <b>불참·결석·지각·조퇴</b>가 있는 학생은 체크가 풀려 있어야 합니다.
+자동으로 풀리지만(빨간 사유 표시), 스캔 상태에 따라 놓칠 수 있으니 <b>비고란과 체크 상태를 반드시 눈으로 대조하고, 안 풀렸으면 직접 해제</b>하세요.
+체크 해제 = 나이스에 없어야 정상이라는 뜻입니다.</li>
+<li><b>[대조 실행]</b> — 결과에서 빨간색 항목만 확인하면 됩니다. [결과 복사] 버튼으로 엑셀에 붙여넣을 수 있습니다.</li>
+</ol>
+
+<h3>결과 판정의 의미</h3>
+<ul>
+<li><b>나이스 누락(미입력)</b>: 확인서엔 있는데 나이스에 없음 → 입력 필요</li>
+<li><b>확인서 비고 '조퇴' — 입력됨(삭제 필요)</b>: 불참·조퇴 학생이 입력되어 있음 → 삭제 필요</li>
+<li><b>시간·날짜·내용 불일치 / 누계 오류</b>: 입력값이 확인서와 다름 → 수정 필요</li>
+<li><b>계획 점검의 '완료 · 비고/불참 제외 N명'</b>: 정상입니다(제외자는 미입력이 맞음)</li>
+</ul>
+
+<h3>유의사항</h3>
+<ul>
+<li>모든 파일은 <b>이 컴퓨터 안에서만</b> 처리됩니다. 학생 정보가 외부로 전송되지 않습니다.</li>
+<li>스캔본은 글자 인식이 완벽하지 않습니다. 2단계 확인 없이 결과를 그대로 믿지 마세요. 도장 찍기 전 <b>한글 원본을 PDF로 저장</b>한 파일이나 <b>엑셀 확인서</b>를 쓰면 훨씬 정확하고 빠릅니다.</li>
+<li>계획서 자동 추출은 표의 학년별 열 위치까지는 구분하지 못합니다. 우리 학년에 해당 없는 날짜가 섞이면 입력란에서 그 줄을 지우세요. (엑셀을 먼저 선택하면 학년에 맞게 추출)</li>
+<li>학기 중간에 점검할 때는 계획 입력란에서 아직 안 지난 날짜 줄을 지우고 실행하세요.</li>
+<li>최종 판단은 반드시 원본 확인서와 나이스 화면에서 직접 확인 후 처리하세요. 이 프로그램은 점검 보조 도구입니다.</li>
+</ul>
+</details>
+
+<!-- 1단계: 파일 업로드 -->
+<div class="step" id="step1">
+  <h2>1단계. 파일 선택</h2>
+  <div class="drop" id="dropX">나이스 엑셀 파일(.xlsx) <input type="file" id="fileX" accept=".xlsx,.xls">
+    <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요)</div></div>
+  <div class="drop" id="dropP">봉사활동 확인서 파일 (PDF·엑셀, 여러 개 가능) <input type="file" id="fileP" accept=".pdf,.xlsx,.xls" multiple>
+    <div class="note">교내봉사활동확인서(학급/소집단) — <b>스캔한 PDF</b>, 한글(HWP)에서 <b>PDF로 저장</b>한 파일, <b>엑셀 파일</b> 모두 가능. 스캔본은 자동으로 글자 인식(OCR) 처리되고, 한글 변환본·엑셀은 글자 그대로 정확하게 읽힙니다</div></div>
+  <div class="drop" id="dropPlan">연간 봉사활동 계획서 PDF (선택) — 첨부하면 계획 날짜를 자동 추출합니다 <input type="file" id="filePlan" accept=".pdf"></div>
+  <label class="note">연간 계획 목록 (선택) — 한 줄에 하나씩: 날짜 내용 시간 (예: 2026.03.03 봉사활동 소양 교육 1시간)</label>
+  <textarea id="planText" rows="5" style="width:98%;border:1px solid #bbb;border-radius:4px;padding:6px;font-size:13px" placeholder="입력하면 3단계에서 '연간 계획 이행 점검' 결과가 함께 나옵니다. 비워두면 이 검사는 건너뜁니다."></textarea>
+  <div class="notice">⚠ <b>유의사항</b> — 봉사활동이 자율·자치활동 표 안에 섞여 있는 계획서는 표의 <b>학년별 열 위치까지는 읽지 못합니다.</b>
+  학년마다 시행 날짜가 다른 활동이 있으면 다른 학년의 날짜가 함께 추출될 수 있으니,
+  <b>추출 후 위 입력란에서 우리 학년에 해당하지 않는 날짜 줄을 지운 뒤</b> 대조를 실행하세요.
+  (나이스 엑셀을 먼저 선택하면 학년에 맞춰 추출합니다)</div>
+  <div><button id="btnStart" disabled>파일 읽기 시작</button></div>
+  <div id="status"></div>
+</div>
+
+<!-- 2단계: 검증 화면 -->
+<div class="step" id="step2" style="display:none">
+  <h2>2단계. 읽어낸 내용 확인·수정 <span class="note">— 원본 이미지를 보며 날짜·내용·시간·참가자를 확인하세요. 스캔본은 이름이 잘못 읽히기 쉬워 학급 명단 체크박스로 표시합니다.</span></h2>
+  <div id="cards"></div>
+  <button id="btnCompare">3단계: 대조 실행</button>
+</div>
+
+<!-- 3단계: 결과 -->
+<div class="step" id="step3" style="display:none">
+  <h2>3단계. 대조 결과</h2>
+  <div id="planResult"></div>
+  <div id="summary"></div>
+  <label style="font-size:13px"><input type="checkbox" id="onlyBad" checked> 문제 있는 항목만 보기</label>
+  <button class="sub" id="btnCopy">결과 복사(엑셀 붙여넣기용)</button>
+  <div id="result" style="margin-top:8px"></div>
+</div>
+
+<footer style="text-align:center;color:#888;font-size:12px;line-height:1.7;padding:18px 0 8px;border-top:1px solid #ddd;margin-top:8px">
+  made by HJ · 비영리·교육용 무료
+</footer>
+</div>
+
+<script>
+'use strict';
+/* ================= CORE (화면과 무관한 순수 로직 — 테스트 가능) ================= */
+
+// 공백 제거 정규화
+const norm = s => String(s ?? '').replace(/\s+/g, '');
+// 장소 정규화: '(학교)인천동방중학교' → '인천동방중학교'
+const normPlace = s => norm(s).replace(/^\([^)]*\)/, '');
+// 날짜 정규화: 숫자만 뽑아 'YYYY.MM.DD' 또는 'YYYY.MM.DD~YYYY.MM.DD'
+function normDate(s) {
+  const d = String(s ?? '').match(/\d+/g) || [];
+  const parts = [];
+  // 연(4자리)·월·일 세 숫자가 모두 있어야 날짜로 인정 — "2026년 12월"처럼 일(日)이 없으면 무시
+  for (let i = 0; i + 2 < d.length && d[i].length === 4 && d[i+1].length <= 2 && d[i+2].length <= 2; i += 3) {
+    parts.push(d[i] + '.' + d[i+1].padStart(2,'0') + '.' + d[i+2].padStart(2,'0'));
+  }
+  return parts.join('~');
+}
+
+// 나이스 엑셀 파싱: 2차원 배열 → {classInfo, roster, recs}
+// 주의: 나이스 출력물은 인쇄 페이지마다 머리글이 반복되고 열 위치도 달라짐 → 머리글을 만날 때마다 열 위치를 다시 잡음
+function parseNice(rows) {
+  let col = null, classInfo = null, cur = null;
+  const recs = [], roster = [];
+  for (const r0 of rows) {
+    const r = r0 || [];
+    const ns = r.map(norm);
+    if (ns.includes('번호') && ns.includes('성명')) {   // 머리글 행 → 열 위치 갱신
+      col = {};
+      ns.forEach((n, j) => {
+        if (n === '번호') col.no = j;
+        else if (n === '성명') col.name = j;
+        else if (n.includes('일자')) col.date = j;
+        else if (n.includes('장소')) col.place = j;
+        else if (n.includes('내용')) col.content = j;
+        else if (n.includes('누계')) col.cum = j;
+        else if (n === '시간') col.hours = j;
+      });
+      continue;
+    }
+    if (!classInfo) for (const c of r) {
+      const m = String(c ?? '').match(/(\d)\s*학년\s*(\d{1,2})\s*반/);
+      if (m) { classInfo = { grade: +m[1], cls: +m[2] }; break; }
+    }
+    if (!col) continue;
+    const date = normDate(r[col.date]);
+    const name = norm(r[col.name]);
+    if (name && r[col.no] != null && !isNaN(+r[col.no])) {  // 새 학생 시작(병합 셀의 첫 줄)
+      cur = { no: +r[col.no], name };
+      if (!roster.some(s => s.no === cur.no && s.name === cur.name)) roster.push(cur); // 페이지 걸침 중복 방지
+    }
+    if (!cur || !/^\d{4}\./.test(date)) continue;  // 날짜 없는 줄(합계 등)은 건너뜀
+    recs.push({ no: cur.no, name: cur.name, date,
+      place: String(r[col.place] ?? ''), content: String(r[col.content] ?? ''),
+      hours: +r[col.hours] || 0, cum: +r[col.cum] || 0 });
+  }
+  if (!col) throw new Error('엑셀에서 표 머리글(번호/성명)을 찾지 못했습니다.');
+  roster.sort((a, b) => a.no - b.no);
+  return { classInfo, roster, recs };
+}
+
+// 대조: 검증된 확인서 페이지들 vs 나이스 기록
+// pages: [{excluded,type,absent,date,content,place,hours,checkedNames:[..]}]
+function compare(pages, recs, roster) {
+  const expected = [];  // 확인서 기준으로 "나이스에 있어야 할" 기록
+  pages.forEach((p, i) => {
+    if (p.excluded) return;
+    p.checkedNames.forEach(name => expected.push({
+      name, date: normDate(p.date), content: p.content, place: p.place,
+      hours: +p.hours || 0, page: i + 1 }));
+  });
+  const byName = list => { const m = {}; list.forEach(r => (m[r.name] = m[r.name] || []).push(r)); return m; };
+  const expM = byName(expected), nicM = byName(recs);
+  const names = [...new Set([...roster.map(s => s.name)])];
+  const noOf = {}; roster.forEach(s => noOf[s.name] = s.no);
+  const out = [];
+  const add = (name, type, exp, nic, ok) => out.push({ no: noOf[name] ?? '', name, type, exp, nic, ok });
+  const desc = r => r ? `${r.date} / ${norm(r.content)} / ${r.hours}시간` : '-';
+
+  for (const name of names) {
+    const exp = (expM[name] || []).map(r => ({ ...r, used: false }));
+    const nic = (nicM[name] || []).map(r => ({ ...r, used: false }));
+    // 1) 같은 날짜끼리 매칭
+    for (const e of exp) {
+      const n = nic.find(n => !n.used && n.date === e.date);
+      if (!n) continue;
+      e.used = n.used = true;
+      const probs = [];
+      if ((+n.hours || 0) !== e.hours) probs.push(`시간 불일치(확인서 ${e.hours} / 나이스 ${n.hours})`);
+      if (norm(n.content) !== norm(e.content)) probs.push('내용 불일치');
+      if (e.place && normPlace(n.place) !== normPlace(e.place)) probs.push('장소 불일치');
+      if (probs.length) add(name, probs.join(', '), desc(e), desc(n), false);
+      else add(name, '일치', desc(e), desc(n), true);
+    }
+    // 2) 날짜는 다른데 내용이 같으면 → 날짜 불일치
+    for (const e of exp) {
+      if (e.used) continue;
+      const n = nic.find(n => !n.used && norm(n.content) === norm(e.content));
+      if (n) { e.used = n.used = true; add(name, '날짜 불일치', desc(e), desc(n), false); }
+    }
+    // 3) 확인서에 있는데 나이스에 없음 → 누락
+    exp.filter(e => !e.used).forEach(e => add(name, '나이스 누락(미입력)', desc(e), '-', false));
+    // 4) 나이스에 있는데 확인서 근거 없음 → 비고(불참 등) 학생이면 '삭제 필요'로 명확히 판정
+    nic.filter(n => !n.used).forEach(n => {
+      const pg = pages.find(p => !p.excluded && p.absent && p.absent[name] && normDate(p.date) === n.date);
+      if (pg) add(name, `확인서 비고 '${pg.absent[name]}' — 나이스에 입력됨(삭제 필요)`, '-', desc(n), false);
+      else add(name, '확인서 근거 없음(불참자 입력?)', '-', desc(n), false);
+    });
+    // 5) 시간누계 검산
+    let run = 0;
+    for (const n of (nicM[name] || [])) {
+      run += (+n.hours || 0);
+      if (n.cum && n.cum !== run) { add(name, `누계 오류(계산 ${run} / 입력 ${n.cum})`, '-', desc(n), false); run = n.cum; }
+    }
+  }
+  return out;
+}
+
+// 연간 계획 목록 파싱: "2026.03.03 봉사활동 소양 교육 1시간" 형식의 줄들 → [{date, content, hours}]
+function parsePlanLines(text) {
+  const items = [];
+  for (const line of String(text ?? '').split('\n')) {
+    const l = line.trim();
+    if (!l) continue;
+    const date = normDate(l);
+    if (!/^\d{4}\./.test(date)) continue;  // 날짜 없는 줄은 무시
+    const mh = l.match(/(\d+(?:\.\d+)?)\s*시간/);
+    const content = l
+      .replace(/\d{4}[.\s년]+\d{1,2}[.\s월]+\d{1,2}[.\s일]*\s*(?:~\s*\d{4}[.\s년]+\d{1,2}[.\s월]+\d{1,2}[.\s일]*)?/g, '')
+      .replace(/[(（]?\s*\d+(?:\.\d+)?\s*[)）]?\s*시간/g, '')
+      .replace(/^[\s,~\-–|]+|[\s,~\-–|]+$/g, '');
+    items.push({ date, content, hours: mh ? +mh[1] : null });
+  }
+  return items;
+}
+
+// 종합 계획서(창체 운영계획 등)에서 봉사활동 계획만 추출 → {items, source}
+// - 봉사활동 절('다. 봉사활동 연간 운영계획(3학년)' 등)이 있고 학년이 맞으면 그 구간을 사용
+// - 학년이 다르면(예: 1·2학년) 나머지 표에서 봉사 관련 항목(봉사·정화 키워드)만 골라냄
+// - 날짜에 연도가 없으면 학년도 기준으로 붙임 (3~12월=당해 연도, 1~2월=다음 해)
+function extractVolunteerPlan(text, grade) {
+  // 숫자만 있는 줄(표에서 줄바꿈으로 떨어진 시간 값)은 앞줄에 다시 붙임
+  const lines = [];
+  for (const l of String(text ?? '').split('\n')) {
+    if (/^\s*\d+(?:\.\d+)?\s*$/.test(l) && lines.length) lines[lines.length - 1] += '   ' + l.trim();
+    else lines.push(l);
+  }
+  const ym = String(text).match(/(\d{4})\s*학년도/);
+  const baseYear = ym ? +ym[1] : new Date().getFullYear();
+  let s = -1, e = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const n = norm(lines[i]);
+    if (s < 0) {
+      if (n.includes('봉사활동') && (n.includes('계획') || n.includes('운영'))) s = i;
+    } else if (/^([가나다라마바사]\.|\d+\.[가-힣])/.test(n) && !n.includes('봉사')) { e = i; break; }
+  }
+  // 봉사활동 절 제목에 학년이 적혀 있으면 그 학년 전용 절로 판단
+  const gm = s >= 0 ? norm(lines[s]).match(/(\d)\s*학년/) : null;
+  const sectionGrade = gm ? +gm[1] : null;
+  const useSection = s >= 0 && (grade == null || sectionGrade == null || sectionGrade === grade);
+  let source, target;
+  if (useSection) {
+    source = '봉사활동 절' + (sectionGrade ? `(${sectionGrade}학년)` : '');
+    target = lines.slice(s + 1, e);
+  } else {
+    // 봉사활동 절 밖(자율·자치활동 표 등)에서 봉사·정화 항목만
+    source = `자율·자치활동 등에서 봉사 관련 항목(${grade}학년 기준)`;
+    target = lines.filter((l, i) => (s < 0 || i < s || i >= e) && /봉사|정화/.test(l));
+  }
+  const items = [];
+  for (const line of target) {
+    // 요일 괄호는 '(화)' '( 화 )' '（화）' 모두 인식 (pdf.js는 괄호 안에 공백을 넣기도 함)
+    // 요일 없는 '2026.3.3', '2026-03-03', '2026/3/3' 형식도 인식 (학교마다 계획서 표기가 다름)
+    const md = line.match(/(?:(\d{4})[.\s]+)?(\d{1,2})\.\s*(\d{1,2})\.?\s*[(（]\s*[월화수목금토일]\s*[)）]/)
+      || line.match(/(\d{4})[.\-\/]\s*(\d{1,2})[.\-\/]\s*(\d{1,2})/);
+    if (!md) continue;  // 날짜 없는 줄은 표의 머리글·합계 줄
+    const mo = +md[2], da = +md[3];
+    const y = md[1] ? +md[1] : (mo >= 3 ? baseYear : baseYear + 1);
+    const rest = line.replace(md[0], ' ');
+    // 내용: 한글 덩어리 중 가장 긴 것 (교내/교외, 학년, 부서명 같은 열 값은 제외)
+    // 공백 1칸까지만 같은 덩어리로 봄 — 2칸 이상은 표의 칸 경계
+    const chunks = rest.match(/[가-힣]+(?: [가-힣]+)*/g) || [];
+    const content = (chunks.filter(c => !/부$|^교내$|^교외$|학년|^전학년$/.test(norm(c)))
+      .sort((a, b) => b.length - a.length)[0] || '').replace(/\s+/g, ' ').trim();
+    // 시간: 줄에서 마지막 숫자(시간 열이 맨 오른쪽) — '3 학년' 같은 학년 숫자는 먼저 제거
+    const nums = rest.replace(/\d+\s*학년/g, ' ').match(/\d+(?:\.\d+)?/g) || [];
+    items.push({ date: `${y}.${String(mo).padStart(2,'0')}.${String(da).padStart(2,'0')}`,
+      content, hours: nums.length ? +nums[nums.length - 1] : null });
+  }
+  return { items, source };
+}
+
+// 연간 계획 이행 점검: 계획일자마다 ① 확인서(학급) 존재 ② 나이스 입력 인원 확인 + 학생별 계획일자 시간 합계
+function comparePlan(plan, pages, recs, roster) {
+  const classPages = pages.filter(p => !p.excluded && p.type !== '소집단');
+  const items = plan.map(pl => {
+    const pg = classPages.find(p => normDate(p.date) === pl.date);
+    const entered = new Set(recs.filter(r => r.date === pl.date).map(r => r.name));
+    // 확인서가 있으면 검증화면에서 체크된 학생만 입력 대상 — 비고(조퇴 등)로 체크 해제된 학생은 미입력이 정상
+    const checked = pg ? new Set(pg.checkedNames) : null;
+    const missing = roster.map(s => s.name).filter(n => !entered.has(n) && (!checked || checked.has(n)));
+    const excluded = checked ? roster.map(s => s.name).filter(n => !checked.has(n))
+      .map(n => n + (pg.absent && pg.absent[n] ? `(${pg.absent[n]})` : '')) : [];
+    return { ...pl, hasCert: !!pg, entered: entered.size, total: roster.length, missing, excluded };
+  });
+  const planDates = new Set(plan.map(p => p.date));
+  const perStudent = roster.map(s => {
+    const rs = recs.filter(r => r.name === s.name && planDates.has(r.date));
+    return { no: s.no, name: s.name, days: rs.length, hours: rs.reduce((a, r) => a + (+r.hours || 0), 0) };
+  });
+  return { items, perStudent, planHours: plan.reduce((a, p) => a + (p.hours || 0), 0), planDays: plan.length };
+}
+
+// 확인서 텍스트에서 정보 자동 추출
+function extractInfo(text, roster, classInfo) {
+  const t = text || '', flat = norm(t);
+  const info = { type: flat.includes('소집단') ? '소집단' : '학급', date: '', content: '', hours: '', count: null, matched: new Set() };
+  // 날짜: 여러 형식 지원 — '2026년 6월 4일', '2026.06.04', '2026-06-04', '2026/6/4', 기간(~) 표기
+  const m1 = t.match(/(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일/);
+  const period = flat.match(/(\d{4})[.\-\/,](\d{1,2})[.\-\/,](\d{1,2})\.?~(\d{4})[.\-\/,](\d{1,2})[.\-\/,](\d{1,2})/);
+  const m2 = flat.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  if (period) info.date = normDate(period.slice(1, 4).join('.') + '~' + period.slice(4).join('.'));
+  else if (m1) info.date = normDate(m1.slice(1).join('.'));
+  else if (m2) info.date = normDate(m2.slice(1).join('.'));
+  // 시간: '( 1 )시간' — 글자 인식이 1을 l, ｌ, I 등으로 잘못 읽는 경우 보정
+  // 숫자가 있으면 글자 노이즈는 버리고, 숫자가 없으면 lookalike를 1로 간주
+  const mh = t.match(/[(（]\s*([0-9lｌIi|]{1,3})\s*[)）]\s*시간/);
+  if (mh) {
+    const raw = mh[1];
+    info.hours = /\d/.test(raw) ? +raw.replace(/\D/g, '') : +raw.replace(/[lｌIi|]/g, '1') || '';
+  }
+  // 활동내용: 라벨 뒤 텍스트에서 첫 덩어리
+  const mc = t.match(/활동내용\s+([^\n]+)/);
+  if (mc) info.content = mc[1].split(/\s{3,}/)[0].trim();
+  // 활동학생 수
+  const mn = t.match(/[활할]동학생\s*[({[]?\s*(\d+)/);
+  if (mn) info.count = +mn[1];
+  // 참가자: 이름 또는 학번(소집단)이 텍스트에 보이면 체크 후보
+  for (const s of roster) {
+    let hit = flat.includes(s.name);
+    if (!hit && classInfo) {  // 학번 = 학년*10000 + 반*100 + 번호 (예: 3학년2반5번 → 30205)
+      const id = String(classInfo.grade * 10000 + classInfo.cls * 100 + s.no);
+      hit = flat.includes(id);
+    }
+    if (hit) info.matched.add(s.name);
+  }
+  // 비고란 사유(불참·결석·지각·조퇴 등) 인식: 같은 줄에서 사유 앞에 있는 가장 가까운 이름의 학생에게 붙임
+  // 이런 학생은 나이스에 입력하면 안 되므로 참가 후보에서 제외
+  info.absent = {};
+  for (const line of t.split('\n')) {
+    const marks = [];
+    for (const s of roster) {
+      const p = line.indexOf(s.name);
+      if (p >= 0) marks.push({ p, name: s.name });
+    }
+    if (!marks.length) continue;
+    marks.sort((a, b) => a.p - b.p);
+    const re = /불참|결석|지각|조퇴|미참여|미실시/g;
+    let m;
+    while ((m = re.exec(line))) {
+      const owner = [...marks].reverse().find(k => k.p < m.index);
+      if (owner) info.absent[owner.name] = m[0];
+    }
+  }
+  for (const n of Object.keys(info.absent)) info.matched.delete(n);
+  return info;
+}
+/* ================= END CORE ================= */
+
+/* ================= 화면 처리 ================= */
+let nice = null;          // {classInfo, roster, recs}
+let pageData = [];        // [{canvas 또는 null, text, src, title, info}]
+const $ = id => document.getElementById(id);
+const status = msg => $('status').textContent = msg;
+
+let xFile = null, pFiles = [];
+$('fileX').onchange = e => { xFile = e.target.files[0]; $('dropX').classList.add('ok'); ready(); };
+$('fileP').onchange = e => { pFiles = [...e.target.files]; $('dropP').classList.add('ok'); ready(); };
+function ready(){ $('btnStart').disabled = !(xFile && pFiles.length); }
+
+// 계획서 PDF 첨부 → 날짜 자동 추출해서 입력란 채우기 (사용자가 확인·수정)
+$('filePlan').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    let text = '';
+    for (let p = 1; p <= pdf.numPages; p++) text += await extractPdfText(await pdf.getPage(p)) + '\n';
+    if (norm(text).length < 30) { alert('스캔본 PDF라 글자를 추출할 수 없습니다. 아래 입력란에 계획 날짜를 직접 입력해 주세요.'); return; }
+    // 학년 확인(엑셀에서) — 3학년은 봉사활동 절, 1·2학년은 자율·자치활동 표의 봉사 항목을 추출
+    let grade = null;
+    if (xFile) {
+      try {
+        const wb = XLSX.read(await xFile.arrayBuffer(), { type: 'array' });
+        grade = parseNice(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null })).classInfo?.grade ?? null;
+      } catch (e) { /* 엑셀 문제는 btnStart에서 알림 */ }
+    } else if (!confirm('나이스 엑셀을 아직 선택하지 않아 학년을 알 수 없습니다.\n계속하면 계획서의 봉사활동 절 기준으로 추출합니다. 계속할까요?')) return;
+    // 종합 계획서면 봉사활동 부분만 추출, 아니면 전체에서 날짜 줄 추출
+    let { items, source: mode } = extractVolunteerPlan(text, grade);
+    if (!items.length) { items = parsePlanLines(text); mode = '전체 문서'; }
+    if (!items.length) { alert('계획서에서 날짜를 찾지 못했습니다. 직접 입력해 주세요.'); return; }
+    $('planText').value = items.map(i =>
+      `${i.date} ${i.content}${i.hours != null ? ' ' + i.hours + '시간' : ''}`.trim()).join('\n');
+    $('dropPlan').classList.add('ok');
+    alert(`${mode}에서 계획 ${items.length}건을 추출했습니다. 입력란에서 확인·수정하세요.` +
+      (mode.startsWith('자율') ? '\n\n⚠ 학년별 열 위치까지는 구분하지 못하므로, 우리 학년에 해당하지 않는 날짜가 섞였는지 확인하고 그 줄은 지워 주세요.' : ''));
+  } catch (err) { alert('계획서 읽기 오류: ' + err.message); }
+};
+
+$('btnStart').onclick = async () => {
+  $('btnStart').disabled = true;
+  try {
+    // 엑셀 읽기
+    status('엑셀 읽는 중...');
+    const wb = XLSX.read(await xFile.arrayBuffer(), { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    nice = parseNice(XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }));
+    status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건. 확인서 읽는 중...`);
+
+    // 확인서 → 페이지별 처리
+    // 한글(HWP)에서 바로 변환한 PDF·엑셀은 글자가 파일에 들어 있어 100% 정확하게 추출됨('문서' 방식)
+    // 글자가 없으면(=스캔본) 글자 인식(OCR)으로 넘어감
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    pageData = [];
+    for (const f of pFiles) {
+      // 엑셀 확인서: 시트 내용을 글자 그대로 읽음 (칸 경계는 공백 3칸으로 표시)
+      if (/\.xlsx?$/i.test(f.name)) {
+        const wb2 = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+        for (const sn of wb2.SheetNames) {
+          const rows2 = XLSX.utils.sheet_to_json(wb2.Sheets[sn], { header: 1, defval: '', raw: false });
+          const text = rows2.map(r => r.map(c => String(c).trim()).filter(Boolean).join('   ')).filter(Boolean).join('\n');
+          if (norm(text).length < 10) continue;  // 빈 시트는 건너뜀
+          pageData.push({ canvas: null, text, src: '문서', title: `${f.name} — ${sn}` });
+        }
+        continue;
+      }
+      const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+      for (let p = 1; p <= pdf.numPages; p++) {
+        status(`PDF 읽는 중... ${f.name} ${p}/${pdf.numPages}쪽`);
+        const page = await pdf.getPage(p);
+        const vp0 = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: 1600 / vp0.width });  // 화면·글자 인식용 해상도
+        const cv = document.createElement('canvas');
+        cv.width = vp.width; cv.height = vp.height;
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        const text = await extractPdfText(page);
+        pageData.push({ canvas: cv, text, src: norm(text).length > 50 ? '문서' : 'OCR', title: `${f.name} ${p}쪽` });
+      }
+    }
+
+    // 스캔본만 글자 인식 (첫 실행 시 한국어 데이터 다운로드로 다소 걸림)
+    const needOcr = pageData.filter(d => d.src === 'OCR');
+    if (needOcr.length) {
+      status(`스캔본 ${needOcr.length}쪽 발견 — 글자 인식(OCR) 준비 중(첫 실행은 데이터 다운로드로 1~2분)...`);
+      const worker = await Tesseract.createWorker('kor');
+      for (let i = 0; i < needOcr.length; i++) {
+        status(`글자 인식 진행 중... ${i + 1} / ${needOcr.length} 페이지`);
+        const { data } = await worker.recognize(binarize(needOcr[i].canvas));
+        needOcr[i].text = data.text;
+      }
+      await worker.terminate();
+    }
+    pageData.forEach(d => d.info = extractInfo(d.text, nice.roster, nice.classInfo));
+    buildCards();
+    $('step2').style.display = '';
+    status('완료. 아래 2단계에서 확인·수정하세요.');
+  } catch (err) {
+    status('오류: ' + err.message);
+    $('btnStart').disabled = false;
+  }
+};
+
+// 문서 PDF에서 글자 데이터 추출: 같은 높이(y)의 글자들을 한 줄로 묶고,
+// 표의 칸 사이처럼 간격이 크면 공백 3칸을 넣어 칸 경계를 유지 (extractInfo의 규칙과 호환)
+async function extractPdfText(page) {
+  const tc = await page.getTextContent();
+  const lines = {};
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const y = Math.round(it.transform[5] / 4) * 4;  // 비슷한 높이는 같은 줄로 취급
+    (lines[y] = lines[y] || []).push(it);
+  }
+  return Object.keys(lines).sort((a, b) => b - a).map(y => {  // 위에서 아래로
+    let s = '', end = null;
+    for (const it of lines[y].sort((a, b) => a.transform[4] - b.transform[4])) {  // 왼쪽에서 오른쪽으로
+      const x = it.transform[4];
+      if (end !== null) s += (x - end > 10) ? '   ' : ' ';
+      s += it.str;
+      end = x + (it.width || 0);
+    }
+    return s;
+  }).join('\n');
+}
+
+// 흑백 이진화(스캔 노이즈·도장 제거로 글자 인식 정확도 향상)
+function binarize(src) {
+  const cv = document.createElement('canvas');
+  cv.width = src.width; cv.height = src.height;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(src, 0, 0);
+  const img = ctx.getImageData(0, 0, cv.width, cv.height), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = 0.3 * d[i] + 0.59 * d[i+1] + 0.11 * d[i+2];
+    const v = g > 170 ? 255 : 0;
+    d[i] = d[i+1] = d[i+2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+
+// 2단계 검증 카드 생성
+function buildCards() {
+  const box = $('cards'); box.innerHTML = '';
+  const contents = [...new Set(nice.recs.map(r => norm(r.content) && r.content.trim()))].filter(Boolean);
+  const places = [...new Set(nice.recs.map(r => r.place.trim()))].filter(Boolean);
+  const dl = `<datalist id="dlC">${contents.map(c => `<option value="${c}">`).join('')}</datalist>`;
+
+  pageData.forEach((pd, i) => {
+    const inf = pd.info;
+    const card = document.createElement('div');
+    card.className = 'card'; card.id = 'card' + i;
+    // 원본 보기: PDF는 이미지, 엑셀 확인서는 표 내용 텍스트
+    let visual;
+    if (pd.canvas) {
+      visual = document.createElement('img');
+      visual.src = pd.canvas.toDataURL('image/jpeg', 0.8);
+      visual.onclick = () => visual.classList.toggle('big');
+    } else {
+      visual = document.createElement('pre');
+      visual.textContent = pd.text;
+    }
+    const form = document.createElement('div');
+    form.className = 'form';
+    const isClass = inf.type === '학급';
+    const isDoc = pd.src === '문서';
+    form.innerHTML = `
+      <b>페이지 ${i + 1}</b> <span class="note">${pd.title || ''}</span> <span class="chip" style="background:${isDoc ? '#c8e6c9' : '#ffe0b2'}">${isDoc ? '문서 파일 — 자동 추출(정확)' : '스캔 PDF — 글자 인식(확인 필요)'}</span>
+      <label><input type="checkbox" class="fEx"> 이 페이지 대조에서 제외</label>
+      <label>유형 <select class="fT"><option${isClass?' selected':''}>학급</option><option${isClass?'':' selected'}>소집단</option></select></label>
+      <label>일자 또는 기간 (예: 2026.03.03 또는 2026.03.20~2026.06.10)
+        <input type="text" class="fD" value="${inf.date}"></label>
+      <label>활동내용 <input type="text" class="fC" list="dlC" value="${inf.content.replace(/"/g,'&quot;')}"></label>
+      <label>장소/주관기관 <input type="text" class="fP" value="${places[0] || ''}"></label>
+      <label>시간 <input type="number" class="fH" value="${inf.hours}" min="0" step="0.5"></label>
+      <label>참가자 — 비고란에 불참·결석·지각·조퇴가 읽히면 자동으로 체크 해제되고 빨간색 사유가 표시됩니다. 원본의 비고란과 맞는지 확인하세요. (체크 해제 = 나이스에 없어야 정상)</label>
+      <div style="margin:4px 0"><button class="sub bAll">전체 선택</button> <button class="sub bNone">전체 해제</button></div>
+      <div class="roster"></div>
+      <div class="hint fHint"></div>`;
+    const rosterBox = form.querySelector('.roster');
+    nice.roster.forEach(s => {
+      // 문서 파일: 명단이 정확히 읽히므로 찾은 학생만 체크
+      // 스캔 PDF: 이름 인식이 부정확하므로 학급은 전원 체크(제외자만 해제), 소집단은 학번으로 찾은 학생만
+      // 비고(불참·결석·지각·조퇴) 학생은 어느 경우든 체크 해제 + 사유 표시
+      const reason = inf.absent && inf.absent[s.name];
+      const checked = !reason && (isDoc ? inf.matched.has(s.name) : (isClass || inf.matched.has(s.name)));
+      rosterBox.insertAdjacentHTML('beforeend',
+        `<label><input type="checkbox" class="fS" data-name="${s.name}"${checked?' checked':''}>${s.no} ${s.name}${reason ? `<span class="warn">(${reason})</span>` : ''}</label>`);
+    });
+    const hint = () => {
+      const n = form.querySelectorAll('.fS:checked').length;
+      const el = form.querySelector('.fHint');
+      const bad = inf.count != null && inf.count !== n;
+      el.innerHTML = `현재 체크 ${n}명` + (inf.count != null ?
+        ` / 확인서의 활동학생 수 ${inf.count}명 ${bad ? '<span class="warn">← 숫자가 다릅니다. 명단을 확인하세요!</span>' : '✓'}` : '');
+    };
+    form.querySelectorAll('.fS').forEach(c => c.onchange = hint);
+    form.querySelector('.bAll').onclick = () => { form.querySelectorAll('.fS').forEach(c => c.checked = true); hint(); };
+    form.querySelector('.bNone').onclick = () => { form.querySelectorAll('.fS').forEach(c => c.checked = false); hint(); };
+    form.querySelector('.fEx').onchange = e => card.classList.toggle('excl', e.target.checked);
+    hint();
+    card.append(visual, form);
+    box.appendChild(card);
+  });
+  box.insertAdjacentHTML('beforeend', dl);
+}
+
+// 3단계: 대조 실행
+let findings = [];
+$('btnCompare').onclick = () => {
+  const pages = [...document.querySelectorAll('.card')].map((card, i) => ({
+    excluded: card.querySelector('.fEx').checked,
+    absent: (pageData[i] && pageData[i].info.absent) || {},
+    type: card.querySelector('.fT').value,
+    date: card.querySelector('.fD').value,
+    content: card.querySelector('.fC').value,
+    place: card.querySelector('.fP').value,
+    hours: card.querySelector('.fH').value,
+    checkedNames: [...card.querySelectorAll('.fS:checked')].map(c => c.dataset.name)
+  }));
+  findings = compare(pages, nice.recs, nice.roster);
+  renderPlan(pages);
+  renderResult();
+  $('step3').style.display = '';
+  $('step3').scrollIntoView({ behavior: 'smooth' });
+};
+
+// 연간 계획 이행 점검 결과 표시
+function renderPlan(pages) {
+  const box = $('planResult');
+  const plan = parsePlanLines($('planText').value);
+  if (!plan.length) { box.innerHTML = ''; return; }
+  const r = comparePlan(plan, pages, nice.recs, nice.roster);
+  const rows = r.items.map(it => {
+    let verdict, bad = true;
+    const exc = it.excluded && it.excluded.length ? ` · 비고/불참 제외 ${it.excluded.length}명: ${it.excluded.join(', ')}` : '';
+    if (!it.hasCert && it.entered === 0) verdict = '확인서·나이스 모두 없음 — 실시 여부 확인 필요';
+    else if (!it.hasCert) verdict = '확인서 없음 (나이스는 입력됨)';
+    else if (it.missing.length === 0) { verdict = '완료' + exc; bad = false; }
+    else verdict = `나이스 미입력 ${it.missing.length}명: ${it.missing.join(', ')}${exc}`;
+    return `<tr class="${bad ? 'bad' : 'okrow'}"><td>${it.date}</td><td>${it.content || '-'}</td><td>${it.hours ?? '-'}</td>
+      <td>${it.hasCert ? '있음' : '<b>없음</b>'}</td><td>${it.entered}/${it.total}명</td><td>${verdict}</td></tr>`;
+  }).join('');
+  const short = r.planHours ? r.perStudent.filter(s => s.hours < r.planHours) : [];
+  box.innerHTML = `<h3 style="margin:4px 0">연간 계획 이행 점검 (계획 ${r.planDays}회 / ${r.planHours || '?'}시간)</h3>
+    <table><tr><th>계획일자</th><th>내용</th><th>시간</th><th>확인서</th><th>나이스 입력</th><th>판정</th></tr>${rows}</table>
+    <p style="font-size:13px">${short.length
+      ? `<span class="warn"><b>계획 시간 미달 학생 ${short.length}명:</b> ${short.map(s => `${s.no} ${s.name}(${s.hours}시간)`).join(', ')}</span>`
+      : `<span style="color:#2e7d32">전원이 계획된 ${r.planHours}시간을 채웠습니다 ✓</span>`}</p><hr>`;
+}
+
+function renderResult() {
+  const bad = findings.filter(f => !f.ok);
+  const cnt = {};
+  bad.forEach(f => { const k = f.type.split('(')[0]; cnt[k] = (cnt[k] || 0) + 1; });
+  $('summary').innerHTML =
+    `<span class="chip">전체 검사 ${findings.length}건</span>` +
+    `<span class="chip ${bad.length ? 'bad' : ''}">문제 ${bad.length}건</span>` +
+    Object.entries(cnt).map(([k, v]) => `<span class="chip bad">${k} ${v}</span>`).join('');
+  const only = $('onlyBad').checked;
+  const rows = (only ? bad : findings).map(f =>
+    `<tr class="${f.ok ? 'okrow' : 'bad'}"><td>${f.no}</td><td>${f.name}</td><td>${f.type}</td><td>${f.exp}</td><td>${f.nic}</td></tr>`).join('');
+  $('result').innerHTML = `<table><tr><th>번호</th><th>성명</th><th>판정</th><th>확인서</th><th>나이스</th></tr>${rows ||
+    '<tr><td colspan="5">표시할 항목이 없습니다.</td></tr>'}</table>`;
+}
+$('onlyBad').onchange = renderResult;
+$('btnCopy').onclick = () => {
+  const tsv = ['번호\t성명\t판정\t확인서\t나이스',
+    ...findings.filter(f => !$('onlyBad').checked || !f.ok).map(f => [f.no, f.name, f.type, f.exp, f.nic].join('\t'))].join('\n');
+  navigator.clipboard.writeText(tsv).then(() => alert('복사됨 — 엑셀에 붙여넣으세요.'));
+};
+</script>
+</body>
+</html>
