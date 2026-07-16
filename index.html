@@ -64,7 +64,7 @@
 <ol>
 <li><b>파일 선택</b> — ① 나이스 엑셀: 나이스 → 학생부 → 항목별 조회 → <b>봉사활동상황(현재학년)</b> 다운로드 파일 그대로(편집 금지)
 ② 확인서: 스캔한 PDF, 한글에서 PDF로 저장한 파일, 엑셀 파일 모두 가능(여러 개 가능)
-③ (선택) 연간 계획서 PDF 첨부 또는 계획 직접 입력</li>
+③ (선택) 연간 계획서(PDF·엑셀) 첨부 또는 계획 직접 입력</li>
 <li><b>[파일 읽기 시작]</b> 클릭 — 자동으로 내용을 읽습니다. 스캔본은 글자 인식 때문에 페이지당 몇 초, 첫 실행은 1~2분 걸립니다.</li>
 <li><b>2단계 확인</b> — 페이지마다 원본(이미지 또는 표 내용)과 읽어낸 내용(날짜·활동·시간·참가자)이 맞는지 비교하고 다르면 고칩니다.
 <span class="must">가장 중요!</span> 비고란에 <b>불참·결석·지각·조퇴</b>가 있는 학생은 체크가 풀려 있어야 합니다.
@@ -98,7 +98,7 @@
     <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요)</div></div>
   <div class="drop" id="dropP">봉사활동 확인서 파일 (PDF·엑셀, 여러 개 가능) <input type="file" id="fileP" accept=".pdf,.xlsx,.xls" multiple>
     <div class="note">교내봉사활동확인서(학급/소집단) — <b>스캔한 PDF</b>, 한글(HWP)에서 <b>PDF로 저장</b>한 파일, <b>엑셀 파일</b> 모두 가능. 스캔본은 자동으로 글자 인식(OCR) 처리되고, 한글 변환본·엑셀은 글자 그대로 정확하게 읽힙니다</div></div>
-  <div class="drop" id="dropPlan">연간 봉사활동 계획서 PDF (선택) — 첨부하면 계획 날짜를 자동 추출합니다 <input type="file" id="filePlan" accept=".pdf"></div>
+  <div class="drop" id="dropPlan">연간 봉사활동 계획서 (PDF·엑셀, 선택) — 첨부하면 계획 날짜를 자동 추출합니다 <input type="file" id="filePlan" accept=".pdf,.xlsx,.xls"></div>
   <label class="note">연간 계획 목록 (선택) — 한 줄에 하나씩: 날짜 내용 시간 (예: 2026.03.03 봉사활동 소양 교육 1시간)</label>
   <textarea id="planText" rows="5" style="width:98%;border:1px solid #bbb;border-radius:4px;padding:6px;font-size:13px" placeholder="입력하면 3단계에서 '연간 계획 이행 점검' 결과가 함께 나옵니다. 비워두면 이 검사는 건너뜁니다."></textarea>
   <div class="notice">⚠ <b>유의사항</b> — 봉사활동이 자율·자치활동 표 안에 섞여 있는 계획서는 표의 <b>학년별 열 위치까지는 읽지 못합니다.</b>
@@ -143,9 +143,13 @@ const normPlace = s => norm(s).replace(/^\([^)]*\)/, '');
 function normDate(s) {
   const d = String(s ?? '').match(/\d+/g) || [];
   const parts = [];
-  // 연(4자리)·월·일 세 숫자가 모두 있어야 날짜로 인정 — "2026년 12월"처럼 일(日)이 없으면 무시
-  for (let i = 0; i + 2 < d.length && d[i].length === 4 && d[i+1].length <= 2 && d[i+2].length <= 2; i += 3) {
-    parts.push(d[i] + '.' + d[i+1].padStart(2,'0') + '.' + d[i+2].padStart(2,'0'));
+  // 연(4자리)·월·일 세 숫자가 이어져야 날짜로 인정 — 앞에 연번 같은 숫자가 있어도 건너뛰고 찾음
+  let i = 0;
+  while (i + 3 <= d.length) {
+    if (d[i].length === 4 && d[i+1].length <= 2 && d[i+2].length <= 2) {
+      parts.push(d[i] + '.' + d[i+1].padStart(2,'0') + '.' + d[i+2].padStart(2,'0'));
+      i += 3;
+    } else i++;
   }
   return parts.join('~');
 }
@@ -287,8 +291,8 @@ function extractVolunteerPlan(text, grade) {
       if (n.includes('봉사활동') && (n.includes('계획') || n.includes('운영'))) s = i;
     } else if (/^([가나다라마바사]\.|\d+\.[가-힣])/.test(n) && !n.includes('봉사')) { e = i; break; }
   }
-  // 봉사활동 절 제목에 학년이 적혀 있으면 그 학년 전용 절로 판단
-  const gm = s >= 0 ? norm(lines[s]).match(/(\d)\s*학년/) : null;
+  // 봉사활동 절 제목에 학년이 적혀 있으면 그 학년 전용 절로 판단 ('학년도'의 학년은 제외)
+  const gm = s >= 0 ? norm(lines[s]).match(/(\d)\s*학년(?!도)/) : null;
   const sectionGrade = gm ? +gm[1] : null;
   const useSection = s >= 0 && (grade == null || sectionGrade == null || sectionGrade === grade);
   let source, target;
@@ -416,11 +420,20 @@ $('filePlan').onchange = async e => {
   const f = e.target.files[0];
   if (!f) return;
   try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
     let text = '';
-    for (let p = 1; p <= pdf.numPages; p++) text += await extractPdfText(await pdf.getPage(p)) + '\n';
-    if (norm(text).length < 30) { alert('스캔본 PDF라 글자를 추출할 수 없습니다. 아래 입력란에 계획 날짜를 직접 입력해 주세요.'); return; }
+    if (/\.xlsx?$/i.test(f.name)) {
+      // 엑셀 계획서: 시트 내용을 글자로 변환 (날짜 형식 셀은 yyyy-mm-dd로 읽음)
+      const wbP = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+      for (const sn of wbP.SheetNames) {
+        const rowsP = XLSX.utils.sheet_to_json(wbP.Sheets[sn], { header: 1, defval: '', raw: false, dateNF: 'yyyy-mm-dd' });
+        text += rowsP.map(r => r.map(c => String(c).trim()).filter(Boolean).join('   ')).filter(Boolean).join('\n') + '\n';
+      }
+    } else {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+      for (let p = 1; p <= pdf.numPages; p++) text += await extractPdfText(await pdf.getPage(p)) + '\n';
+    }
+    if (norm(text).length < 30) { alert('글자를 추출할 수 없는 파일입니다(스캔본 PDF 등). 아래 입력란에 계획 날짜를 직접 입력해 주세요.'); return; }
     // 학년 확인(엑셀에서) — 3학년은 봉사활동 절, 1·2학년은 자율·자치활동 표의 봉사 항목을 추출
     let grade = null;
     if (xFile) {
