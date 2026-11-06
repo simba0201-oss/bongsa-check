@@ -601,23 +601,36 @@ function extractPrevInfo(text, roster, prev) {
   const t = String(text || '').replace(/\s+/g, ' '), flat = norm(text);
   const linked = new Set(Object.values(prev.links));
   const idOf = k => { const [g, c, n] = k.split('-').map(Number); return String(g * 10000 + c * 100 + n); };
+  // 학번은 글자 인식이 숫자 사이를 띄우기도 함(30101 → 3 01 01) → 숫자 사이 공백 1칸 허용
+  const idRe = id => new RegExp(`(^|\\D)${id.split('').join(' ?')}(\\D|$)`);
   const found = new Set();
   info.count = null;     // 확인서 인원은 그해 반 전체라 우리 반 체크 수와 비교 불가
   info.strict = true;    // 화면에서 찾은 학생만 체크
+  // 유형: 그해 학번이 보이면 소집단(학급 확인서에는 학번 없음), '소집단명'이 조금 틀리게 읽혀도 소집단
+  const idHits = Object.entries(prev.links).filter(([k]) => idRe(idOf(k)).test(t));
+  info.type = (idHits.length || /소.?.?단명|소집단/.test(flat)) ? '소집단' : '학급';
   if (info.type === '소집단') {
-    for (const [k, name] of Object.entries(prev.links))
-      if (new RegExp(`(^|\\D)${idOf(k)}(\\D|$)`).test(t)) found.add(name);
+    idHits.forEach(([, name]) => found.add(name));
     for (const s of roster) if (linked.has(s.name) && flat.includes(s.name)) found.add(s.name);
     const byName = {};
     for (const n of found) { const m = t.match(new RegExp(n + '\\s*(\\d{1,2})(?!\\d)')); if (m) byName[n] = +m[1]; }
     if (Object.keys(byName).length) { const { main, except } = splitHours(byName); info.hours = main; info.hoursBy = except; }
   } else {
-    const m = flat.match(/학년반(\d)학년(\d{1,2})반/);
-    if (m && +m[1] === prev.grade) {
-      info.prevCls = +m[2];
-      for (const [k, name] of Object.entries(prev.links)) if (k.startsWith(`${prev.grade}-${+m[2]}-`)) found.add(name);
-    } else if (m) info.otherGrade = true;
-    else { info.clsUnknown = true; for (const s of roster) if (linked.has(s.name) && flat.includes(s.name)) found.add(s.name); }
+    // 반 찾기: '3학년 1반', 학년반 칸의 '3 1', '3-1' 모두 인정
+    const m = flat.match(/(\d)학년(\d{1,2})반/) || t.match(/학\s?년\s?반\D{0,4}(\d)\s*[-.\s]\s*(\d{1,2})(?!\d)/);
+    let g = m ? +m[1] : null, c = m ? +m[2] : null;
+    if (!m) {
+      // 그래도 못 읽으면: 읽힌 이름들이 그해 어느 반이었는지로 반 추정(가장 많은 반)
+      const cnt = {};
+      for (const [k, name] of Object.entries(prev.links)) if (flat.includes(name)) cnt[k.split('-')[1]] = (cnt[k.split('-')[1]] || 0) + 1;
+      const best = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+      if (best) { g = prev.grade; c = +best; info.clsByName = true; }
+    }
+    if (g === prev.grade) {
+      info.prevCls = c;
+      for (const [k, name] of Object.entries(prev.links)) if (k.startsWith(`${prev.grade}-${c}-`)) found.add(name);
+    } else if (g != null) info.otherGrade = true;
+    else info.clsUnknown = true;
   }
   // 비고(불참 등)는 이 확인서 대상 학생에게만 적용 (다른 반 동명이인 제외)
   for (const n of Object.keys(info.absent)) if (!found.has(n)) delete info.absent[n];
@@ -877,8 +890,7 @@ function buildCards() {
       <label>활동내용 <input type="text" class="fC" list="dlC" value="${inf.content.replace(/"/g,'&quot;')}"></label>
       <label>장소/주관기관 <input type="text" class="fP" value="${places[0] || ''}"></label>
       <label>시간 <input type="number" class="fH" value="${inf.hours}" min="0" step="0.5"></label>
-      ${inf.prevCls ? `<div class="note">${nice.prev.grade}학년 ${inf.prevCls}반 확인서 — 그해 이 반이었던 우리 반 학생을 체크했습니다.</div>` : ''}
-      ${inf.clsUnknown ? `<div class="warn">확인서의 학년반을 읽지 못해 이름으로만 찾았습니다. 원본을 보고 빠진 학생을 체크하세요.</div>` : ''}
+      ${inf.prevCls ? `<div class="${inf.clsByName ? 'warn' : 'note'}">${nice.prev.grade}학년 ${inf.prevCls}반 확인서${inf.clsByName ? '(학년반을 못 읽어 이름으로 추정 — 원본의 학년반을 확인하세요)' : ''} — 그해 이 반이었던 우리 반 학생을 체크했습니다.</div>` : ''}
       ${inf.type === '소집단' ? `<div class="note">학생 이름 옆 칸 = 학생별 시간. 비워 두면 위의 기본 시간으로 대조합니다. 원본과 다르면 고치세요.</div>`
         : inf.hoursBy && Object.keys(inf.hoursBy).length ? `<div class="note">시간이 다른 학생(확인서 기준, 그대로 대조): ${Object.entries(inf.hoursBy).map(([n, h]) => `${n} ${h}시간`).join(', ')}</div>` : ''}
       <label>참가자 — 비고란에 불참·결석·지각·조퇴가 읽히면 자동으로 체크 해제되고 빨간색 사유가 표시됩니다. 원본의 비고란과 맞는지 확인하세요. (체크 해제 = 나이스에 없어야 정상)</label>
