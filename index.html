@@ -204,7 +204,7 @@ function compare(pages, recs, roster) {
     if (p.excluded) return;
     p.checkedNames.forEach(name => expected.push({
       name, date: normDate(p.date), content: p.content, place: p.place,
-      hours: +p.hours || 0, page: i + 1 }));
+      hours: +((p.hoursBy || {})[name] ?? p.hours) || 0, page: i + 1 }));
   });
   const byName = list => { const m = {}; list.forEach(r => (m[r.name] = m[r.name] || []).push(r)); return m; };
   const expM = byName(expected), nicM = byName(recs);
@@ -402,6 +402,124 @@ function extractInfo(text, roster, classInfo) {
   for (const n of Object.keys(info.absent)) info.matched.delete(n);
   return info;
 }
+// 학번 = 학년*10000 + 반*100 + 번호 (예: 3학년 2반 5번 → 30205)
+const studentId = (ci, no) => String(ci.grade * 10000 + ci.cls * 100 + no);
+// 가장 많이 나온 값(기본 시간), 그와 다른 학생만 예외로 따로 기록
+function splitHours(byName) {
+  const cnt = {};
+  Object.values(byName).forEach(h => cnt[h] = (cnt[h] || 0) + 1);
+  const main = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+  const except = {};
+  for (const [n, h] of Object.entries(byName)) if (h !== main) except[n] = h;
+  return { main, except };
+}
+const ABSENT_RE = /불참|결석|지각|조퇴|미참여|미실시/;
+
+// 새 학급 확인서(엑셀): 한 시트에 연간 날짜가 열로 나열, 칸에 1=참가 / 불참 등=비고
+// 열 전체가 비어 있으면(변경 전 양식으로 낸 날짜) 건너뜀 → 날짜 열마다 확인서 1장으로 반환
+function parseClassSheet(rows, classInfo, roster) {
+  const at = (r, c) => String((rows[r] || [])[c] ?? '').trim();
+  const flatAll = rows.map(r => (r || []).map(norm).join('')).join('');
+  // 이 시트의 학년·반: '학년반 3 학년 2 반' 칸
+  const mc = flatAll.match(/학년반(\d)학년(\d{1,2})반/);
+  const sheetClass = mc ? { grade: +mc[1], cls: +mc[2] } : null;
+  const ym = flatAll.match(/(\d{4})학년도/);
+  const baseYear = ym ? +ym[1] : new Date().getFullYear();
+  const hr = rows.findIndex(r => (r || []).some(c => norm(c) === '활동날짜'));
+  const h = rows[hr].map(norm);
+  const lab = h.indexOf('활동날짜'), noC = h.indexOf('번호'), nameC = h.indexOf('이름');
+  const endC = h.findIndex(c => c.includes('누적'));
+  // '활동내용' 줄 찾기 (머리글 아래 몇 줄 안)
+  let cr = -1;
+  for (let r = hr + 1; r < hr + 6 && r < rows.length; r++) if (norm(at(r, lab)) === '활동내용') cr = r;
+  // 학생 줄: 내용 줄 다음부터, 번호가 숫자이고 이름이 있는 동안
+  const studs = [];
+  for (let r = (cr >= 0 ? cr : hr) + 1; r < rows.length; r++) {
+    const no = at(r, noC), name = norm(at(r, nameC));
+    if (!/^\d+$/.test(no) || !name || name.includes('이하빈칸')) break;
+    studs.push({ r, no: +no, name });
+  }
+  const pages = [];
+  for (let c = lab + 1; c < (endC > 0 ? endC : h.length); c++) {
+    const md = at(hr, c).match(/(\d{1,2})\s*\.\s*(\d{1,2})/);
+    if (!md) continue;
+    const mo = +md[1], da = +md[2];
+    const date = `${mo >= 3 ? baseYear : baseYear + 1}.${String(mo).padStart(2,'0')}.${String(da).padStart(2,'0')}`;
+    const byName = {}, absent = {};
+    const lines = [];
+    for (const s of studs) {
+      const v = at(s.r, c);
+      const rs = roster.find(x => x.name === s.name);
+      lines.push(`${s.no} ${s.name}   ${v || '(빈칸)'}`);
+      if (!rs) continue;
+      if (/^\d+(\.\d+)?$/.test(v)) byName[rs.name] = +v;
+      else { const m = v.match(ABSENT_RE); if (m) absent[rs.name] = m[0]; }
+    }
+    if (!Object.keys(byName).length && !Object.keys(absent).length) continue;  // 빈 열 = 변경 전 양식
+    const content = cr >= 0 ? at(cr, c) : '';
+    const { main, except } = Object.keys(byName).length ? splitHours(byName) : { main: '', except: {} };
+    pages.push({
+      text: `날짜 ${at(hr, c)}   교시 ${at(hr + 1, c)}\n활동내용 ${content}\n\n${lines.join('\n')}`,
+      sheetClass,
+      info: { type: '학급', date, content, hours: main, hoursBy: except,
+        count: Object.keys(byName).length, matched: new Set(Object.keys(byName)), absent } });
+  }
+  return { sheetClass, pages };
+}
+
+// 소집단 확인서(엑셀): 한 시트에 확인서 여러 장이 가로·세로로 놓일 수 있음
+// '소집단명' 칸 위치로 확인서 영역(블록)을 잘라내고, 칸 위치로 학번·이름·학생별 시간을 읽음
+function parseGroupSheet(rows, classInfo, roster) {
+  const at = (r, c) => String((rows[r] || [])[c] ?? '').trim();
+  const anchors = [];
+  rows.forEach((row, r) => (row || []).forEach((v, c) => { if (norm(v) === '소집단명') anchors.push({ r, c }); }));
+  const W = Math.max(...rows.map(r => (r || []).length));
+  const blocks = [];
+  for (const a of anchors) {
+    // 오른쪽 경계: 같은 높이에 있는 다음 확인서의 시작 열 / 아래 경계: 같은 열 범위의 다음 확인서 제목 줄
+    const right = Math.min(W, ...anchors.filter(b => b.c > a.c && Math.abs(b.r - a.r) < 3).map(b => b.c));
+    const bottom = Math.min(rows.length, ...anchors.filter(b => b.r > a.r + 3 && b.c >= a.c && b.c < right).map(b => b.r - 2));
+    // 라벨 오른쪽의 첫 값
+    const valOf = label => {
+      for (let r = a.r; r < bottom; r++) for (let c = a.c; c < right; c++)
+        if (norm(at(r, c)) === label) {
+          for (let k = c + 1; k < right; k++) if (at(r, k)) return at(r, k);
+          return '';
+        }
+      return '';
+    };
+    const group = valOf('소집단명'), period = valOf('활동일시'), content = valOf('활동내용');
+    // 명단 머리글(학번·이름·활동시간) 위치
+    let tr = -1, idC = -1, nameC = -1, hC = -1;
+    for (let r = a.r; r < bottom && tr < 0; r++) for (let c = a.c; c < right; c++) {
+      const n = norm(at(r, c));
+      if (n === '학번') { tr = r; idC = c; }
+      else if (n === '이름') nameC = c;
+      else if (n === '활동시간') hC = c;
+    }
+    if (tr < 0) continue;
+    const byName = {}, lines = [];
+    for (let r = tr + 1; r < bottom; r++) {
+      const name = norm(at(r, nameC));
+      if (name.includes('이하빈칸') || norm(at(r, a.c)) === '확인기관명') break;
+      const id = norm(at(r, idC));
+      if (!name && !id) continue;
+      lines.push(`${id} ${name}   ${at(r, hC)}시간`);
+      // 학번이 있으면 학번으로(동명이인 방지), 없으면 이름으로 우리 반 학생 찾기
+      const rs = roster.find(s => id ? studentId(classInfo, s.no) === id : s.name === name);
+      const hv = +at(r, hC);
+      if (rs && hv > 0) byName[rs.name] = hv;
+    }
+    if (!Object.keys(byName).length) continue;  // 우리 반 학생 없는 확인서는 표시 안 함
+    const { main, except } = splitHours(byName);
+    blocks.push({
+      group,
+      text: `소집단명 ${group}\n활동일시 ${period}\n활동내용 ${content}\n\n${lines.join('\n')}`,
+      info: { type: '소집단', date: normDate(period), content, hours: main, hoursBy: except,
+        count: Object.keys(byName).length, matched: new Set(Object.keys(byName)), absent: {} } });
+  }
+  return blocks;
+}
 /* ================= END CORE ================= */
 
 /* ================= 화면 처리 ================= */
@@ -473,12 +591,33 @@ $('btnStart').onclick = async () => {
       // 엑셀 확인서: 시트 내용을 글자 그대로 읽음 (칸 경계는 공백 3칸으로 표시)
       if (/\.xlsx?$/i.test(f.name)) {
         const wb2 = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+        let classSheets = 0, ourClass = false;
         for (const sn of wb2.SheetNames) {
           const rows2 = XLSX.utils.sheet_to_json(wb2.Sheets[sn], { header: 1, defval: '', raw: false });
+          const has = label => rows2.some(r => (r || []).some(c => norm(c) === label));
+          // 새 학급 양식(날짜가 열로 나열): 우리 반 시트만 읽음 — 학년반 칸, 없으면 시트 이름(예: 3-2)으로 판단
+          if (has('활동날짜')) {
+            classSheets++;
+            const { sheetClass, pages } = parseClassSheet(rows2, nice.classInfo, nice.roster);
+            const ms = sn.match(/(\d)\s*-\s*(\d{1,2})/);
+            const sc = sheetClass || (ms ? { grade: +ms[1], cls: +ms[2] } : null);
+            if (!sc || !nice.classInfo || sc.grade !== nice.classInfo.grade || sc.cls !== nice.classInfo.cls) continue;
+            ourClass = true;
+            pages.forEach(p => pageData.push({ canvas: null, text: p.text, src: '문서',
+              title: `${f.name} — ${sn} ${p.info.date}`, info: p.info }));
+            continue;
+          }
+          // 소집단 양식: 시트 안의 확인서를 한 장씩 잘라 읽음
+          if (has('소집단명')) {
+            parseGroupSheet(rows2, nice.classInfo, nice.roster).forEach(b => pageData.push({ canvas: null,
+              text: b.text, src: '문서', title: `${f.name} — ${sn} (${b.info.content})`, info: b.info }));
+            continue;
+          }
           const text = rows2.map(r => r.map(c => String(c).trim()).filter(Boolean).join('   ')).filter(Boolean).join('\n');
           if (norm(text).length < 10) continue;  // 빈 시트는 건너뜀
           pageData.push({ canvas: null, text, src: '문서', title: `${f.name} — ${sn}` });
         }
+        if (classSheets && !ourClass) throw new Error(`${f.name}에서 ${nice.classInfo?.grade}학년 ${nice.classInfo?.cls}반 시트를 찾지 못했습니다. 시트의 학년반 칸이나 시트 이름(예: 3-2)을 확인하세요.`);
         continue;
       }
       const pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
@@ -507,7 +646,7 @@ $('btnStart').onclick = async () => {
       }
       await worker.terminate();
     }
-    pageData.forEach(d => d.info = extractInfo(d.text, nice.roster, nice.classInfo));
+    pageData.forEach(d => d.info = d.info || extractInfo(d.text, nice.roster, nice.classInfo));
     buildCards();
     $('step2').style.display = '';
     status('완료. 아래 2단계에서 확인·수정하세요.');
@@ -589,6 +728,7 @@ function buildCards() {
       <label>활동내용 <input type="text" class="fC" list="dlC" value="${inf.content.replace(/"/g,'&quot;')}"></label>
       <label>장소/주관기관 <input type="text" class="fP" value="${places[0] || ''}"></label>
       <label>시간 <input type="number" class="fH" value="${inf.hours}" min="0" step="0.5"></label>
+      ${inf.hoursBy && Object.keys(inf.hoursBy).length ? `<div class="note">시간이 다른 학생(확인서 기준, 그대로 대조): ${Object.entries(inf.hoursBy).map(([n, h]) => `${n} ${h}시간`).join(', ')}</div>` : ''}
       <label>참가자 — 비고란에 불참·결석·지각·조퇴가 읽히면 자동으로 체크 해제되고 빨간색 사유가 표시됩니다. 원본의 비고란과 맞는지 확인하세요. (체크 해제 = 나이스에 없어야 정상)</label>
       <div style="margin:4px 0"><button class="sub bAll">전체 선택</button> <button class="sub bNone">전체 해제</button></div>
       <div class="roster"></div>
@@ -627,6 +767,7 @@ $('btnCompare').onclick = () => {
   const pages = [...document.querySelectorAll('.card')].map((card, i) => ({
     excluded: card.querySelector('.fEx').checked,
     absent: (pageData[i] && pageData[i].info.absent) || {},
+    hoursBy: (pageData[i] && pageData[i].info.hoursBy) || {},
     type: card.querySelector('.fT').value,
     date: card.querySelector('.fD').value,
     content: card.querySelector('.fC').value,
