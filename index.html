@@ -133,6 +133,9 @@
 <!-- 3단계: 결과 -->
 <div class="step" id="step3" style="display:none">
   <h2>3단계. 대조 결과</h2>
+  <div class="drop" id="dropRe">나이스를 고친 뒤 <b>새로 받은 나이스 엑셀</b>만 다시 올리기 <input type="file" id="fileRe" accept=".xlsx,.xls">
+    <button id="btnRecompare" disabled>나이스만 다시 읽고 대조</button> <span id="reMsg" class="note"></span>
+    <div class="note">2단계에서 확인·수정한 내용은 그대로 두고, 나이스 기록만 새로 읽어 대조합니다.</div></div>
   <div id="planResult"></div>
   <div id="summary"></div>
   <label style="font-size:13px"><input type="checkbox" id="onlyBad" checked> 문제 있는 항목만 보기</label>
@@ -690,7 +693,8 @@ $('fileH').onchange = e => { hFile = e.target.files[0]; showFiles('listH', e.tar
 // 초기화: 선택한 파일·입력 내용·2~3단계 결과를 모두 지우고 처음 상태로
 $('btnReset').onclick = () => {
   if (!confirm('선택한 파일과 2·3단계에서 확인·수정한 내용이 모두 지워집니다. 초기화할까요?')) return;
-  ['fileX', 'fileH', 'fileP', 'filePlan'].forEach(id => $(id).value = '');
+  ['fileX', 'fileH', 'fileP', 'filePlan', 'fileRe'].forEach(id => $(id).value = '');
+  reFile = null; $('btnRecompare').disabled = true; $('dropRe').classList.remove('ok'); $('reMsg').textContent = '';
   ['listX', 'listH', 'listP', 'listPlan', 'cards', 'planResult', 'summary', 'result'].forEach(id => $(id).innerHTML = '');
   ['dropX', 'dropH', 'dropP', 'dropPlan'].forEach(id => $(id).classList.remove('ok'));
   xFile = null; hFile = null; pFiles = []; nice = null; pageData = []; findings = [];
@@ -745,30 +749,36 @@ $('filePlan').onchange = async e => {
   } catch (err) { alert('계획서 읽기 오류: ' + err.message); }
 };
 
+// 나이스 엑셀 읽기(이전 학년도면 학적사항 연결·학년/반 거르기까지) — 처음 읽기와 '나이스만 다시 대조'에서 함께 사용
+async function loadNice(file, quiet = false) {
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const n = parseNice(XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }));
+  n.prev = null;
+  if (isPrev()) {
+    // 이전 학년도: 그 학년 기록만 남기고, 학적사항으로 그해 학번 ↔ 지금 학생 연결
+    if (!n.recs.some(r => r.grade)) throw new Error('나이스 엑셀에 학년 칸이 없습니다. 봉사활동상황(전체학년) 파일을 사용하세요.');
+    const g = +$('prevGrade').value;
+    const wbH = XLSX.read(await hFile.arrayBuffer(), { type: 'array' });
+    const hak = parseHakjeok(XLSX.utils.sheet_to_json(wbH.Sheets[wbH.SheetNames[0]], { header: 1, defval: null, raw: false }));
+    const pc = +$('prevCls').value || null;
+    n.prev = buildPrevLinks(hak, n.roster, n.classInfo, g, new Date(), pc);
+    // 그해 이력이 연결된 학생만 점검(반을 고르면 그 반이었던 학생만)
+    const keep = new Set(Object.values(n.prev.links));
+    if (!keep.size) throw new Error(`지금 반 학생 중 ${g}학년${pc ? ' ' + pc + '반' : ''} 이력이 있는 학생이 없습니다. 학적사항 파일과 선택한 반을 확인하세요.`);
+    n.roster = n.roster.filter(s => keep.has(s.name));
+    n.recs = n.recs.filter(r => r.grade === g && keep.has(r.name));
+    if (!quiet && n.prev.missing.length) alert(`학적사항에 ${g}학년 이력이 없는 학생(전입 등): ${n.prev.missing.join(', ')}\n이 학생들은 점검에서 빠집니다.`);
+  }
+  return n;
+}
+
 $('btnStart').onclick = async () => {
   $('btnStart').disabled = true;
   try {
     // 엑셀 읽기
     status('엑셀 읽는 중...');
-    const wb = XLSX.read(await xFile.arrayBuffer(), { type: 'array' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    nice = parseNice(XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }));
-    nice.prev = null;
-    if (isPrev()) {
-      // 이전 학년도: 그 학년 기록만 남기고, 학적사항으로 그해 학번 ↔ 지금 학생 연결
-      if (!nice.recs.some(r => r.grade)) throw new Error('나이스 엑셀에 학년 칸이 없습니다. 봉사활동상황(전체학년) 파일을 사용하세요.');
-      const g = +$('prevGrade').value;
-      const wbH = XLSX.read(await hFile.arrayBuffer(), { type: 'array' });
-      const hak = parseHakjeok(XLSX.utils.sheet_to_json(wbH.Sheets[wbH.SheetNames[0]], { header: 1, defval: null, raw: false }));
-      const pc = +$('prevCls').value || null;
-      nice.prev = buildPrevLinks(hak, nice.roster, nice.classInfo, g, new Date(), pc);
-      // 그해 이력이 연결된 학생만 점검(반을 고르면 그 반이었던 학생만)
-      const keep = new Set(Object.values(nice.prev.links));
-      if (!keep.size) throw new Error(`지금 반 학생 중 ${g}학년${pc ? ' ' + pc + '반' : ''} 이력이 있는 학생이 없습니다. 학적사항 파일과 선택한 반을 확인하세요.`);
-      nice.roster = nice.roster.filter(s => keep.has(s.name));
-      nice.recs = nice.recs.filter(r => r.grade === g && keep.has(r.name));
-      if (nice.prev.missing.length) alert(`학적사항에 ${g}학년 이력이 없는 학생(전입 등): ${nice.prev.missing.join(', ')}\n이 학생들은 점검에서 빠집니다.`);
-    }
+    nice = await loadNice(xFile);
     status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건${nice.prev ? ` (${nice.prev.year}학년도 ${nice.prev.grade}학년${nice.prev.cls ? ' ' + nice.prev.cls + '반이었던 학생' : ''})` : ''}. 확인서 읽는 중...`);
 
     // 확인서 → 페이지별 처리
@@ -960,6 +970,22 @@ function buildCards() {
   });
   box.insertAdjacentHTML('beforeend', dl);
 }
+
+// 3단계: 나이스만 다시 읽고 대조 — 2단계 카드(확인·수정 내용)는 그대로 사용
+let reFile = null;
+$('fileRe').onchange = e => { reFile = e.target.files[0]; $('btnRecompare').disabled = !reFile; $('dropRe').classList.toggle('ok', !!reFile); };
+$('btnRecompare').onclick = async () => {
+  try {
+    const n = await loadNice(reFile, true);
+    // 학생 명단이 바뀌면 2단계 카드와 맞지 않으므로 처음부터 다시
+    const a = nice.roster.map(s => s.no + s.name).join(), b = n.roster.map(s => s.no + s.name).join();
+    if (a !== b) { alert('새 나이스 파일의 학생 명단이 처음 파일과 다릅니다. 다른 반 파일인지 확인하거나, 1단계부터 다시 진행하세요.'); return; }
+    nice.recs = n.recs;
+    xFile = reFile; showFiles('listX', [reFile]);  // 1단계에도 새 파일로 표시
+    $('btnCompare').onclick();
+    $('reMsg').textContent = `✓ ${reFile.name}(으)로 다시 대조했습니다 (${new Date().toLocaleTimeString()})`;
+  } catch (err) { alert('나이스 파일 읽기 오류: ' + err.message); }
+};
 
 // 3단계: 대조 실행
 let findings = [];
