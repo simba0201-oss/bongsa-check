@@ -87,6 +87,8 @@
 <li>스캔본은 글자 인식이 완벽하지 않습니다. 2단계 확인 없이 결과를 그대로 믿지 마세요. 도장 찍기 전 <b>한글 원본을 PDF로 저장</b>한 파일이나 <b>엑셀 확인서</b>를 쓰면 훨씬 정확하고 빠릅니다.</li>
 <li>계획서 자동 추출은 표의 학년별 열 위치까지는 구분하지 못합니다. 우리 학년에 해당 없는 날짜가 섞이면 입력란에서 그 줄을 지우세요. (엑셀을 먼저 선택하면 학년에 맞게 추출)</li>
 <li>학기 중간에 점검할 때는 계획 입력란에서 아직 안 지난 날짜 줄을 지우고 실행하세요.</li>
+<li><b>이전 학년도 점검</b>은 누락·불일치만 찾습니다. <b>확인서가 없는 나이스 기록(잘못 입력된 기록)은 잡아내지 못하니</b> 해당 학년도 확인서를 빠짐없이 올려 주세요.</li>
+<li><b>이전 학년도 스캔본</b>은 2단계에서 활동내용을 직접 입력하고 학생·시간을 하나씩 확인해야 결과를 믿을 수 있습니다. 누락 문제를 정확히 잡으려면 <b>한글 원본을 PDF로 저장한 파일이나 엑셀</b>을 구해서 쓰는 것을 강하게 권합니다.</li>
 <li>최종 판단은 반드시 원본 확인서와 나이스 화면에서 직접 확인 후 처리하세요. 이 프로그램은 점검 보조 도구입니다.</li>
 </ul>
 </details>
@@ -101,7 +103,8 @@
   <div class="drop" id="dropX">나이스 엑셀 파일(.xlsx) <input type="file" id="fileX" accept=".xlsx,.xls">
     <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요). <b>이전 학년도 점검은 봉사활동상황(전체학년)</b> 파일을 사용하세요.</div></div>
   <div class="drop" id="dropH" style="display:none">학적사항 엑셀 — 학년이력(.xlsx) <input type="file" id="fileH" accept=".xlsx,.xls">
-    <div class="note">'학교생활기록부 학년이력' 엑셀 그대로 사용. 그해 반·번호(학번)를 지금 우리 반 학생과 연결하는 데 씁니다.</div></div>
+    <div class="note">'학교생활기록부 학년이력' 엑셀 그대로 사용. 그해 반·번호(학번)를 지금 우리 반 학생과 연결하는 데 씁니다.</div>
+    <div class="notice">⚠ <b>이전 학년도 점검 유의사항</b><br>· 누락·불일치만 찾습니다. <b>확인서가 없는 나이스 기록은 잡아내지 못하니</b> 그 학년도 확인서를 빠짐없이 올려 주세요.<br>· <b>스캔본</b>은 2단계에서 활동내용을 직접 입력하고 학생·시간을 하나씩 확인해야 결과를 믿을 수 있습니다. 누락을 정확히 잡으려면 <b>한글 원본을 PDF로 저장한 파일이나 엑셀</b>을 구해서 쓰세요.</div></div>
   <div class="drop" id="dropP">봉사활동 확인서 파일 (PDF·엑셀, 여러 개 가능) <input type="file" id="fileP" accept=".pdf,.xlsx,.xls" multiple>
     <div class="note">교내봉사활동확인서(학급/소집단) — <b>스캔한 PDF</b>, 한글(HWP)에서 <b>PDF로 저장</b>한 파일, <b>엑셀 파일</b> 모두 가능. 스캔본은 자동으로 글자 인식(OCR) 처리되고, 한글 변환본·엑셀은 글자 그대로 정확하게 읽힙니다</div></div>
   <div class="drop" id="dropPlan">연간 봉사활동 계획서 (PDF·엑셀, 선택) — 첨부하면 계획 날짜를 자동 추출합니다 <input type="file" id="filePlan" accept=".pdf,.xlsx,.xls">
@@ -219,7 +222,7 @@ function similar(a, b) {
 
 // 대조: 검증된 확인서 페이지들 vs 나이스 기록
 // pages: [{excluded,type,absent,date,content,place,hours,checkedNames:[..]}]
-function compare(pages, recs, roster) {
+function compare(pages, recs, roster, opts = {}) {
   const expected = [];  // 확인서 기준으로 "나이스에 있어야 할" 기록
   pages.forEach((p, i) => {
     if (p.excluded) return;
@@ -266,7 +269,7 @@ function compare(pages, recs, roster) {
     nic.filter(n => !n.used).forEach(n => {
       const pg = pages.find(p => !p.excluded && p.absent && p.absent[name] && normDate(p.date) === n.date);
       if (pg) add(name, `확인서 비고 '${pg.absent[name]}' — 나이스에 입력됨(삭제 필요)`, '-', desc(n), false);
-      else add(name, '확인서 근거 없음(불참자 입력?)', '-', desc(n), false);
+      else if (!opts.skipNoCert) add(name, '확인서 근거 없음(불참자 입력?)', '-', desc(n), false);  // 이전 학년도 점검은 표시 안 함
     });
     // 5) 시간누계 검산
     let run = 0;
@@ -908,7 +911,7 @@ $('btnCompare').onclick = () => {
     hours: card.querySelector('.fH').value,
     checkedNames: [...card.querySelectorAll('.fS:checked')].map(c => c.dataset.name)
   }));
-  findings = compare(pages, nice.recs, nice.roster);
+  findings = compare(pages, nice.recs, nice.roster, { skipNoCert: !!nice.prev });
   renderPlan(pages);
   renderResult();
   $('step3').style.display = '';
