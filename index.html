@@ -133,7 +133,7 @@
 <!-- 3단계: 결과 -->
 <div class="step" id="step3" style="display:none">
   <h2>3단계. 대조 결과</h2>
-  <div class="drop" id="dropRe">나이스를 고친 뒤 <b>새로 받은 나이스 엑셀</b>만 다시 올리기 <input type="file" id="fileRe" accept=".xlsx,.xls">
+  <div class="drop" id="dropRe">나이스를 고친 뒤 <b>새로 받은 나이스 엑셀</b>만 다시 올리기 <input type="file" id="fileRe" accept=".xlsx,.xls"><div class="flist" id="listRe"></div>
     <button id="btnRecompare" disabled>나이스만 다시 읽고 대조</button> <span id="reMsg" class="note"></span>
     <div class="note">2단계에서 확인·수정한 내용은 그대로 두고, 나이스 기록만 새로 읽어 대조합니다.</div></div>
   <div id="planResult"></div>
@@ -665,10 +665,17 @@ const $ = id => document.getElementById(id);
 const status = msg => $('status').textContent = msg;
 
 let xFile = null, pFiles = [];
-// 선택한 파일 이름 표시 (여러 개면 번호를 붙여 목록으로)
-const showFiles = (id, files) => $(id).innerHTML = [...files].map((f, i) =>
-  `${files.length > 1 ? (i + 1) + '. ' : '📄 '}${f.name.replace(/</g, '&lt;')}`).join('<br>');
-$('fileX').onchange = e => { xFile = e.target.files[0]; showFiles('listX', e.target.files); $('dropX').classList.toggle('ok', !!xFile); ready(); };
+// 파일 1개 칸: 이름 옆 ✕를 누르면 그 파일을 뺌
+function oneFile(listId, file, onRemove) {
+  $(listId).innerHTML = file ? `📄 ${file.name.replace(/</g, '&lt;')} <button class="sub" title="이 파일 빼기" style="padding:0 6px">✕</button>` : '';
+  if (file) $(listId).querySelector('button').onclick = onRemove;
+}
+function setX(f) {
+  xFile = f || null;
+  oneFile('listX', xFile, () => { $('fileX').value = ''; setX(null); });
+  $('dropX').classList.toggle('ok', !!xFile); ready();
+}
+$('fileX').onchange = e => setX(e.target.files[0]);
 // 확인서는 여러 번 나눠 골라도 앞에 고른 파일에 추가됨(같은 파일은 한 번만), ✕로 하나씩 뺄 수 있음
 function renderPList() {
   $('listP').innerHTML = pFiles.map((f, i) =>
@@ -690,13 +697,18 @@ document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
   $('prevOpts').style.display = $('dropH').style.display = $('prevNotice').style.display = isPrev() ? '' : 'none';
   ready();
 });
-$('fileH').onchange = e => { hFile = e.target.files[0]; showFiles('listH', e.target.files); $('dropH').classList.toggle('ok', !!hFile); ready(); };
+function setH(f) {
+  hFile = f || null;
+  oneFile('listH', hFile, () => { $('fileH').value = ''; setH(null); });
+  $('dropH').classList.toggle('ok', !!hFile); ready();
+}
+$('fileH').onchange = e => setH(e.target.files[0]);
 // 초기화: 선택한 파일·입력 내용·2~3단계 결과를 모두 지우고 처음 상태로
 $('btnReset').onclick = () => {
   if (!confirm('선택한 파일과 2·3단계에서 확인·수정한 내용이 모두 지워집니다. 초기화할까요?')) return;
   ['fileX', 'fileH', 'fileP', 'filePlan', 'fileRe'].forEach(id => $(id).value = '');
   reFile = null; $('btnRecompare').disabled = true; $('dropRe').classList.remove('ok'); $('reMsg').textContent = '';
-  ['listX', 'listH', 'listP', 'listPlan', 'cards', 'planResult', 'summary', 'result'].forEach(id => $(id).innerHTML = '');
+  ['listX', 'listH', 'listP', 'listPlan', 'listRe', 'cards', 'planResult', 'summary', 'result'].forEach(id => $(id).innerHTML = '');
   ['dropX', 'dropH', 'dropP', 'dropPlan'].forEach(id => $(id).classList.remove('ok'));
   xFile = null; hFile = null; pFiles = []; nice = null; pageData = []; findings = [];
   $('planText').value = '';
@@ -713,7 +725,11 @@ function ready(){ $('btnStart').disabled = !(xFile && pFiles.length && (!isPrev(
 // 계획서 PDF 첨부 → 날짜 자동 추출해서 입력란 채우기 (사용자가 확인·수정)
 $('filePlan').onchange = async e => {
   const f = e.target.files[0];
-  showFiles('listPlan', e.target.files);
+  // ✕: 계획서 파일을 빼고, 자동으로 채운 계획 목록도 지울지 물어봄
+  oneFile('listPlan', f, () => {
+    $('filePlan').value = ''; oneFile('listPlan', null); $('dropPlan').classList.remove('ok');
+    if ($('planText').value.trim() && confirm('계획서에서 가져온 연간 계획 목록도 지울까요?')) $('planText').value = '';
+  });
   if (!f) return;
   try {
     let text = '';
@@ -974,7 +990,12 @@ function buildCards() {
 
 // 3단계: 나이스만 다시 읽고 대조 — 2단계 카드(확인·수정 내용)는 그대로 사용
 let reFile = null;
-$('fileRe').onchange = e => { reFile = e.target.files[0]; $('btnRecompare').disabled = !reFile; $('dropRe').classList.toggle('ok', !!reFile); };
+function setRe(f) {
+  reFile = f || null;
+  oneFile('listRe', reFile, () => { $('fileRe').value = ''; setRe(null); });
+  $('btnRecompare').disabled = !reFile; $('dropRe').classList.toggle('ok', !!reFile);
+}
+$('fileRe').onchange = e => setRe(e.target.files[0]);
 $('btnRecompare').onclick = async () => {
   try {
     const n = await loadNice(reFile, true);
@@ -982,7 +1003,7 @@ $('btnRecompare').onclick = async () => {
     const a = nice.roster.map(s => s.no + s.name).join(), b = n.roster.map(s => s.no + s.name).join();
     if (a !== b) { alert('새 나이스 파일의 학생 명단이 처음 파일과 다릅니다. 다른 반 파일인지 확인하거나, 1단계부터 다시 진행하세요.'); return; }
     nice.recs = n.recs;
-    xFile = reFile; showFiles('listX', [reFile]);  // 1단계에도 새 파일로 표시
+    setX(reFile);  // 1단계에도 새 파일로 표시
     $('btnCompare').onclick();
     $('reMsg').textContent = `✓ ${reFile.name}(으)로 다시 대조했습니다 (${new Date().toLocaleTimeString()})`;
   } catch (err) { alert('나이스 파일 읽기 오류: ' + err.message); }
