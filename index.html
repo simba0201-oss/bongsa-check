@@ -101,7 +101,8 @@
   <div class="drop">점검 대상
     <label><input type="radio" name="mode" value="cur" checked> 현재 학년도</label>
     <label><input type="radio" name="mode" value="prev"> 이전 학년도</label>
-    <span id="prevOpts" style="display:none"> — <select id="prevGrade"><option value="1">1학년 때</option><option value="2" selected>2학년 때</option></select> 기록 점검</span></div>
+    <span id="prevOpts" style="display:none"> — <select id="prevGrade"><option value="1">1학년 때</option><option value="2" selected>2학년 때</option></select>
+      <select id="prevCls"><option value="">전체 반</option><option value="1">1반</option><option value="2">2반</option><option value="3">3반</option><option value="4">4반</option><option value="5">5반</option><option value="6">6반</option><option value="7">7반</option><option value="8">8반</option><option value="9">9반</option><option value="10">10반</option><option value="11">11반</option><option value="12">12반</option><option value="13">13반</option><option value="14">14반</option><option value="15">15반</option></select> 기록 점검 <span class="note">(반을 고르면 지금 우리 반 학생 중 그해 그 반이었던 학생만 점검)</span></span></div>
   <div class="drop" id="dropX">나이스 엑셀 파일(.xlsx) <input type="file" id="fileX" accept=".xlsx,.xls"><br><div class="flist" id="listX"></div>
     <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요). <b>이전 학년도 점검은 봉사활동상황(전체학년)</b> 파일을 사용하세요.</div></div>
   <div class="drop" id="dropH" style="display:none">학적사항 엑셀 — 학년이력(.xlsx) <input type="file" id="fileH" accept=".xlsx,.xls"><br><div class="flist" id="listH"></div>
@@ -580,16 +581,18 @@ function parseHakjeok(rows) {
 
 // 이전 학년도 연결표: 그해 '학년-반-번호' → 지금 우리 반 학생 이름
 // 학년도 = 올해 학년도 - (지금 학년 - 점검 학년)  (학년도는 3월 시작)
-function buildPrevLinks(hak, roster, classInfo, grade, today = new Date()) {
+function buildPrevLinks(hak, roster, classInfo, grade, today = new Date(), cls = null) {
   const curYear = today.getMonth() >= 2 ? today.getFullYear() : today.getFullYear() - 1;
   const links = {}, missing = [];
   for (const s of roster) {
     const h = hak.find(x => x.no === s.no && x.name === s.name) || hak.find(x => x.name === s.name);
-    const past = h ? h.hist.filter(x => x.grade === grade) : [];
-    if (!past.length) { missing.push(s.name); continue; }
+    const all = h ? h.hist.filter(x => x.grade === grade) : [];
+    if (!all.length) { missing.push(s.name); continue; }
+    const past = cls ? all.filter(x => x.cls === cls) : all;  // 그해 반을 골랐으면 그 반 이력만
+    if (!past.length) continue;
     past.forEach(p => links[`${p.grade}-${p.cls}-${p.no}`] = s.name);  // 학년 중 반 이동이면 둘 다 연결
   }
-  return { grade, year: curYear - (classInfo.grade - grade), links, missing };
+  return { grade, cls, year: curYear - (classInfo.grade - grade), links, missing };
 }
 // 그해 학번(예: 20502) → 연결표 키('2-5-2')로 지금 학생 이름
 const prevNameById = (prev, id) => /^\d{5}$/.test(id) ? prev.links[`${+id[0]}-${+id.slice(1, 3)}-${+id.slice(3)}`] : undefined;
@@ -677,6 +680,7 @@ $('btnReset').onclick = () => {
   ['dropX', 'dropH', 'dropP', 'dropPlan'].forEach(id => $(id).classList.remove('ok'));
   xFile = null; hFile = null; pFiles = []; nice = null; pageData = []; findings = [];
   $('planText').value = '';
+  $('prevCls').value = '';
   document.querySelector('input[name=mode][value=cur]').checked = true;
   $('prevOpts').style.display = $('dropH').style.display = $('prevNotice').style.display = 'none';
   $('step2').style.display = $('step3').style.display = 'none';
@@ -741,11 +745,16 @@ $('btnStart').onclick = async () => {
       const g = +$('prevGrade').value;
       const wbH = XLSX.read(await hFile.arrayBuffer(), { type: 'array' });
       const hak = parseHakjeok(XLSX.utils.sheet_to_json(wbH.Sheets[wbH.SheetNames[0]], { header: 1, defval: null, raw: false }));
-      nice.prev = buildPrevLinks(hak, nice.roster, nice.classInfo, g);
-      nice.recs = nice.recs.filter(r => r.grade === g);
+      const pc = +$('prevCls').value || null;
+      nice.prev = buildPrevLinks(hak, nice.roster, nice.classInfo, g, new Date(), pc);
+      // 그해 이력이 연결된 학생만 점검(반을 고르면 그 반이었던 학생만)
+      const keep = new Set(Object.values(nice.prev.links));
+      if (!keep.size) throw new Error(`지금 반 학생 중 ${g}학년${pc ? ' ' + pc + '반' : ''} 이력이 있는 학생이 없습니다. 학적사항 파일과 선택한 반을 확인하세요.`);
+      nice.roster = nice.roster.filter(s => keep.has(s.name));
+      nice.recs = nice.recs.filter(r => r.grade === g && keep.has(r.name));
       if (nice.prev.missing.length) alert(`학적사항에 ${g}학년 이력이 없는 학생(전입 등): ${nice.prev.missing.join(', ')}\n이 학생들은 점검에서 빠집니다.`);
     }
-    status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건${nice.prev ? ` (${nice.prev.year}학년도 ${nice.prev.grade}학년)` : ''}. 확인서 읽는 중...`);
+    status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건${nice.prev ? ` (${nice.prev.year}학년도 ${nice.prev.grade}학년${nice.prev.cls ? ' ' + nice.prev.cls + '반이었던 학생' : ''})` : ''}. 확인서 읽는 중...`);
 
     // 확인서 → 페이지별 처리
     // 한글(HWP)에서 바로 변환한 PDF·엑셀은 글자가 파일에 들어 있어 100% 정확하게 추출됨('문서' 방식)
