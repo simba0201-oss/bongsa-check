@@ -94,8 +94,14 @@
 <!-- 1단계: 파일 업로드 -->
 <div class="step" id="step1">
   <h2>1단계. 파일 선택</h2>
+  <div class="drop">점검 대상
+    <label><input type="radio" name="mode" value="cur" checked> 현재 학년도</label>
+    <label><input type="radio" name="mode" value="prev"> 이전 학년도</label>
+    <span id="prevOpts" style="display:none"> — <select id="prevGrade"><option value="1">1학년 때</option><option value="2" selected>2학년 때</option></select> 기록 점검</span></div>
   <div class="drop" id="dropX">나이스 엑셀 파일(.xlsx) <input type="file" id="fileX" accept=".xlsx,.xls">
-    <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요)</div></div>
+    <div class="note">나이스 → 학생부 → <b>항목별 조회 → 봉사활동상황(현재학년)</b>에서 다운로드한 엑셀 파일 그대로 사용 (편집 불필요). <b>이전 학년도 점검은 봉사활동상황(전체학년)</b> 파일을 사용하세요.</div></div>
+  <div class="drop" id="dropH" style="display:none">학적사항 엑셀 — 학년이력(.xlsx) <input type="file" id="fileH" accept=".xlsx,.xls">
+    <div class="note">'학교생활기록부 학년이력' 엑셀 그대로 사용. 그해 반·번호(학번)를 지금 우리 반 학생과 연결하는 데 씁니다.</div></div>
   <div class="drop" id="dropP">봉사활동 확인서 파일 (PDF·엑셀, 여러 개 가능) <input type="file" id="fileP" accept=".pdf,.xlsx,.xls" multiple>
     <div class="note">교내봉사활동확인서(학급/소집단) — <b>스캔한 PDF</b>, 한글(HWP)에서 <b>PDF로 저장</b>한 파일, <b>엑셀 파일</b> 모두 가능. 스캔본은 자동으로 글자 인식(OCR) 처리되고, 한글 변환본·엑셀은 글자 그대로 정확하게 읽힙니다</div></div>
   <div class="drop" id="dropPlan">연간 봉사활동 계획서 (PDF·엑셀, 선택) — 첨부하면 계획 날짜를 자동 추출합니다 <input type="file" id="filePlan" accept=".pdf,.xlsx,.xls">
@@ -171,7 +177,8 @@ function parseNice(rows) {
         else if (n.includes('일자')) col.date = j;
         else if (n.includes('장소')) col.place = j;
         else if (n.includes('내용')) col.content = j;
-        else if (n.includes('누계')) col.cum = j;
+        else if (n.includes('누계')) { if (col.cum == null || n.includes('학년별')) col.cum = j; }  // 전체학년 파일은 '학년별' 누계 사용
+        else if (n === '학년') col.grade = j;
         else if (n === '시간') col.hours = j;
       });
       continue;
@@ -184,11 +191,14 @@ function parseNice(rows) {
     const date = normDate(r[col.date]);
     const name = norm(r[col.name]);
     if (name && r[col.no] != null && !isNaN(+r[col.no])) {  // 새 학생 시작(병합 셀의 첫 줄)
-      cur = { no: +r[col.no], name };
-      if (!roster.some(s => s.no === cur.no && s.name === cur.name)) roster.push(cur); // 페이지 걸침 중복 방지
+      // 페이지 걸침: 이미 있는 학생이면 그 학생을 이어서 사용(중복 방지, 학년 정보 유지)
+      cur = roster.find(s => s.no === +r[col.no] && s.name === name);
+      if (!cur) { cur = { no: +r[col.no], name }; roster.push(cur); }
     }
+    // 전체학년 파일: 학년 칸은 학년이 바뀌는 첫 줄에만 있음 → 학생별로 이어서 적용
+    if (cur && col.grade != null && /^\d+(\.0+)?$/.test(String(r[col.grade] ?? '').trim())) cur.grade = +r[col.grade];
     if (!cur || !/^\d{4}\./.test(date)) continue;  // 날짜 없는 줄(합계 등)은 건너뜀
-    recs.push({ no: cur.no, name: cur.name, date,
+    recs.push({ no: cur.no, name: cur.name, date, grade: cur.grade ?? null,
       place: String(r[col.place] ?? ''), content: String(r[col.content] ?? ''),
       hours: +r[col.hours] || 0, cum: +r[col.cum] || 0 });
   }
@@ -521,6 +531,43 @@ function parseGroupSheet(rows, classInfo, roster) {
   }
   return blocks;
 }
+// 학적사항(학년이력) 파싱: 학생마다 학년별 반·번호 → [{no, name, hist:[{grade, cls, no}]}]
+// 인쇄 페이지마다 머리글이 반복되고, 페이지 경계에서 같은 학생이 다시 나옴 → 이어서 붙임
+function parseHakjeok(rows) {
+  let noC = -1, nameC = -1, gC = -1, cC = -1, hC = -1, cur = null;
+  const list = [];
+  const num = v => /^\d+(\.0+)?$/.test(String(v ?? '').trim()) ? +v : null;
+  for (const r0 of rows) {
+    const r = r0 || [], ns = r.map(norm);
+    if (ns.includes('번호') && ns.includes('성명')) { noC = ns.indexOf('번호'); nameC = ns.indexOf('성명'); continue; }
+    if (ns.includes('학년') && ns.includes('반')) { gC = ns.indexOf('학년'); cC = ns.indexOf('반'); hC = ns.indexOf('번호'); continue; }
+    if (nameC < 0 || gC < 0) continue;
+    const name = norm(r[nameC]);
+    if (name && num(r[noC]) != null) {
+      cur = list.find(s => s.no === num(r[noC]) && s.name === name);
+      if (!cur) { cur = { no: num(r[noC]), name, hist: [] }; list.push(cur); }
+    }
+    const g = num(r[gC]), c = num(r[cC]), n = num(r[hC]);
+    if (cur && g != null && c != null && n != null && !cur.hist.some(h => h.grade === g && h.cls === c && h.no === n))
+      cur.hist.push({ grade: g, cls: c, no: n });
+  }
+  if (!list.length) throw new Error('학적사항 엑셀에서 학년이력 표(번호/성명/학년/반)를 찾지 못했습니다.');
+  return list;
+}
+
+// 이전 학년도 연결표: 그해 '학년-반-번호' → 지금 우리 반 학생 이름
+// 학년도 = 올해 학년도 - (지금 학년 - 점검 학년)  (학년도는 3월 시작)
+function buildPrevLinks(hak, roster, classInfo, grade, today = new Date()) {
+  const curYear = today.getMonth() >= 2 ? today.getFullYear() : today.getFullYear() - 1;
+  const links = {}, missing = [];
+  for (const s of roster) {
+    const h = hak.find(x => x.no === s.no && x.name === s.name) || hak.find(x => x.name === s.name);
+    const past = h ? h.hist.filter(x => x.grade === grade) : [];
+    if (!past.length) { missing.push(s.name); continue; }
+    past.forEach(p => links[`${p.grade}-${p.cls}-${p.no}`] = s.name);  // 학년 중 반 이동이면 둘 다 연결
+  }
+  return { grade, year: curYear - (classInfo.grade - grade), links, missing };
+}
 /* ================= END CORE ================= */
 
 /* ================= 화면 처리 ================= */
@@ -532,7 +579,14 @@ const status = msg => $('status').textContent = msg;
 let xFile = null, pFiles = [];
 $('fileX').onchange = e => { xFile = e.target.files[0]; $('dropX').classList.add('ok'); ready(); };
 $('fileP').onchange = e => { pFiles = [...e.target.files]; $('dropP').classList.add('ok'); ready(); };
-function ready(){ $('btnStart').disabled = !(xFile && pFiles.length); }
+let hFile = null;
+const isPrev = () => document.querySelector('input[name=mode]:checked').value === 'prev';
+document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => {
+  $('prevOpts').style.display = $('dropH').style.display = isPrev() ? '' : 'none';
+  ready();
+});
+$('fileH').onchange = e => { hFile = e.target.files[0]; $('dropH').classList.add('ok'); ready(); };
+function ready(){ $('btnStart').disabled = !(xFile && pFiles.length && (!isPrev() || hFile)); }
 
 // 계획서 PDF 첨부 → 날짜 자동 추출해서 입력란 채우기 (사용자가 확인·수정)
 $('filePlan').onchange = async e => {
@@ -581,7 +635,18 @@ $('btnStart').onclick = async () => {
     const wb = XLSX.read(await xFile.arrayBuffer(), { type: 'array' });
     const ws = wb.Sheets[wb.SheetNames[0]];
     nice = parseNice(XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }));
-    status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건. 확인서 읽는 중...`);
+    nice.prev = null;
+    if (isPrev()) {
+      // 이전 학년도: 그 학년 기록만 남기고, 학적사항으로 그해 학번 ↔ 지금 학생 연결
+      if (!nice.recs.some(r => r.grade)) throw new Error('나이스 엑셀에 학년 칸이 없습니다. 봉사활동상황(전체학년) 파일을 사용하세요.');
+      const g = +$('prevGrade').value;
+      const wbH = XLSX.read(await hFile.arrayBuffer(), { type: 'array' });
+      const hak = parseHakjeok(XLSX.utils.sheet_to_json(wbH.Sheets[wbH.SheetNames[0]], { header: 1, defval: null, raw: false }));
+      nice.prev = buildPrevLinks(hak, nice.roster, nice.classInfo, g);
+      nice.recs = nice.recs.filter(r => r.grade === g);
+      if (nice.prev.missing.length) alert(`학적사항에 ${g}학년 이력이 없는 학생(전입 등): ${nice.prev.missing.join(', ')}\n이 학생들은 점검에서 빠집니다.`);
+    }
+    status(`엑셀 완료: ${nice.roster.length}명, 기록 ${nice.recs.length}건${nice.prev ? ` (${nice.prev.year}학년도 ${nice.prev.grade}학년)` : ''}. 확인서 읽는 중...`);
 
     // 확인서 → 페이지별 처리
     // 한글(HWP)에서 바로 변환한 PDF·엑셀은 글자가 파일에 들어 있어 100% 정확하게 추출됨('문서' 방식)
