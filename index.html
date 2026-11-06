@@ -398,7 +398,7 @@ function extractInfo(text, roster, classInfo) {
     info.hours = /\d/.test(raw) ? +raw.replace(/\D/g, '') : +raw.replace(/[lｌIi|]/g, '1') || '';
   }
   // 활동내용: 라벨 뒤 텍스트에서 첫 덩어리
-  const mc = t.match(/활동내용\s+([^\n]+)/);
+  const mc = t.match(/활\s?동\s?내\s?용\s*[:：]?\s+([^\n]+)/);  // '활동 내용'처럼 띄어 읽혀도 인식
   if (mc) info.content = mc[1].split(/\s{3,}/)[0].trim();
   // 활동학생 수
   const mn = t.match(/[활할]동학생\s*[({[]?\s*(\d+)/);
@@ -608,14 +608,23 @@ function extractPrevInfo(text, roster, prev) {
   info.count = null;     // 확인서 인원은 그해 반 전체라 우리 반 체크 수와 비교 불가
   info.strict = true;    // 화면에서 찾은 학생만 체크
   // 유형: 그해 학번이 보이면 소집단(학급 확인서에는 학번 없음), '소집단명'이 조금 틀리게 읽혀도 소집단
-  const idHits = Object.entries(prev.links).filter(([k]) => idRe(idOf(k)).test(t));
+  // 학년·반·번호가 칸으로 나뉜 양식(예: 2 3 29)도 같은 학생으로 인정
+  const splitRe = k => { const [g, c, n] = k.split('-'); return new RegExp(`(^|\\D)${g}\\s+0?${c}\\s+0?${n}(\\D|$)`); };
+  const idHits = Object.entries(prev.links).filter(([k]) => idRe(idOf(k)).test(t) || splitRe(k).test(t));
   info.type = (idHits.length || /소.?.?단명|소집단/.test(flat)) ? '소집단' : '학급';
   if (info.type === '소집단') {
     idHits.forEach(([, name]) => found.add(name));
     for (const s of roster) if (linked.has(s.name) && flat.includes(s.name)) found.add(s.name);
-    const byName = {};
-    for (const n of found) { const m = t.match(new RegExp(n + '\\s*(\\d{1,2})(?!\\d)')); if (m) byName[n] = +m[1]; }
-    if (Object.keys(byName).length) { const { main, except } = splitHours(byName); info.hours = main; info.hoursBy = except; }
+    // 시간: ① '활동 시간 3시간'처럼 전체 시간이 적힌 양식은 그 값을 모두에게 적용
+    //       ② 명단 머리글에 '이름 시간' 칸이 있는 양식만 이름 바로 뒤 숫자를 학생별 시간으로 읽음
+    //       (시간 칸이 없는 양식에서 이름 뒤 숫자는 다음 학생의 번호일 수 있음)
+    const total = t.match(/활\s?동\s?시\s?간\D{0,6}(\d+(?:\.\d+)?)\s*시\s?간/);
+    if (total) { info.hours = +total[1]; info.hoursBy = {}; }
+    else if (/이\s?름\s*\|?\s*시\s?간/.test(t)) {
+      const byName = {};
+      for (const n of found) { const m = t.match(new RegExp(n + '\\s*(\\d{1,2})(?!\\d)')); if (m) byName[n] = +m[1]; }
+      if (Object.keys(byName).length) { const { main, except } = splitHours(byName); info.hours = main; info.hoursBy = except; }
+    }
   } else {
     // 반 찾기: '3학년 1반', 학년반 칸의 '3 1', '3-1' 모두 인정
     const m = flat.match(/(\d)학년(\d{1,2})반/) || t.match(/학\s?년\s?반\D{0,4}(\d)\s*[-.\s]\s*(\d{1,2})(?!\d)/);
