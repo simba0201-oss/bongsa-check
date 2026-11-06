@@ -207,6 +207,16 @@ function parseNice(rows) {
   return { classInfo, roster, recs };
 }
 
+// 내용 유사도(0~1): 두 글자씩 묶은 조각이 얼마나 겹치는지
+function similar(a, b) {
+  const bg = s => { s = norm(s); const m = []; for (let i = 0; i < s.length - 1; i++) m.push(s.slice(i, i + 2)); return m; };
+  const A = bg(a), B = bg(b);
+  if (!A.length || !B.length) return 0;
+  const rest = [...B]; let hit = 0;
+  for (const x of A) { const k = rest.indexOf(x); if (k >= 0) { hit++; rest.splice(k, 1); } }
+  return 2 * hit / (A.length + B.length);
+}
+
 // 대조: 검증된 확인서 페이지들 vs 나이스 기록
 // pages: [{excluded,type,absent,date,content,place,hours,checkedNames:[..]}]
 function compare(pages, recs, roster) {
@@ -228,10 +238,14 @@ function compare(pages, recs, roster) {
   for (const name of names) {
     const exp = (expM[name] || []).map(r => ({ ...r, used: false }));
     const nic = (nicM[name] || []).map(r => ({ ...r, used: false }));
-    // 1) 같은 날짜끼리 매칭
-    for (const e of exp) {
-      const n = nic.find(n => !n.used && n.date === e.date);
-      if (!n) continue;
+    // 1) 같은 날짜끼리 매칭 — 같은 기간의 소집단이 여러 개일 수 있으므로
+    //    내용이 가장 비슷하고 시간이 같은 짝부터 연결
+    const pairs = [];
+    exp.forEach(e => nic.forEach(n => { if (n.date === e.date)
+      pairs.push({ e, n, s: similar(e.content, n.content) * 2 + ((+n.hours || 0) === e.hours ? 1 : 0) }); }));
+    pairs.sort((a, b) => b.s - a.s);
+    for (const { e, n } of pairs) {
+      if (e.used || n.used) continue;
       e.used = n.used = true;
       const probs = [];
       if ((+n.hours || 0) !== e.hours) probs.push(`시간 불일치(확인서 ${e.hours} / 나이스 ${n.hours})`);
@@ -480,7 +494,7 @@ function parseClassSheet(rows, classInfo, roster) {
 
 // 소집단 확인서(엑셀): 한 시트에 확인서 여러 장이 가로·세로로 놓일 수 있음
 // '소집단명' 칸 위치로 확인서 영역(블록)을 잘라내고, 칸 위치로 학번·이름·학생별 시간을 읽음
-function parseGroupSheet(rows, classInfo, roster) {
+function parseGroupSheet(rows, classInfo, roster, prev = null) {
   const at = (r, c) => String((rows[r] || [])[c] ?? '').trim();
   const anchors = [];
   rows.forEach((row, r) => (row || []).forEach((v, c) => { if (norm(v) === '소집단명') anchors.push({ r, c }); }));
@@ -517,7 +531,10 @@ function parseGroupSheet(rows, classInfo, roster) {
       if (!name && !id) continue;
       lines.push(`${id} ${name}   ${at(r, hC)}시간`);
       // 학번이 있으면 학번으로(동명이인 방지), 없으면 이름으로 우리 반 학생 찾기
-      const rs = roster.find(s => id ? studentId(classInfo, s.no) === id : s.name === name);
+      // 이전 학년도는 그해 학번을 학적사항 연결표로 지금 학생에 연결
+      const rs = prev
+        ? roster.find(s => id ? s.name === prevNameById(prev, id) : (s.name === name && Object.values(prev.links).includes(name)))
+        : roster.find(s => id ? studentId(classInfo, s.no) === id : s.name === name);
       const hv = +at(r, hC);
       if (rs && hv > 0) byName[rs.name] = hv;
     }
@@ -567,6 +584,41 @@ function buildPrevLinks(hak, roster, classInfo, grade, today = new Date()) {
     past.forEach(p => links[`${p.grade}-${p.cls}-${p.no}`] = s.name);  // 학년 중 반 이동이면 둘 다 연결
   }
   return { grade, year: curYear - (classInfo.grade - grade), links, missing };
+}
+// 그해 학번(예: 20502) → 연결표 키('2-5-2')로 지금 학생 이름
+const prevNameById = (prev, id) => /^\d{5}$/.test(id) ? prev.links[`${+id[0]}-${+id.slice(1, 3)}-${+id.slice(3)}`] : undefined;
+
+// 이전 학년도 확인서(PDF·스캔·글자 그대로 읽은 엑셀)에서 정보 추출
+// - 소집단: 그해 학번으로 찾고(이름은 보조), 이름 바로 뒤 숫자를 학생별 시간으로 읽음
+// - 학급: 확인서의 '학년반'을 읽어 그해 그 반이었던 우리 학생 전원을 대상으로 함(이름 인식 오류에 강함)
+function extractPrevInfo(text, roster, prev) {
+  const info = extractInfo(text, roster, null);  // 날짜·내용·시간·비고는 기존 방식 그대로
+  const t = String(text || '').replace(/\s+/g, ' '), flat = norm(text);
+  const linked = new Set(Object.values(prev.links));
+  const idOf = k => { const [g, c, n] = k.split('-').map(Number); return String(g * 10000 + c * 100 + n); };
+  const found = new Set();
+  info.count = null;     // 확인서 인원은 그해 반 전체라 우리 반 체크 수와 비교 불가
+  info.strict = true;    // 화면에서 찾은 학생만 체크
+  if (info.type === '소집단') {
+    for (const [k, name] of Object.entries(prev.links))
+      if (new RegExp(`(^|\\D)${idOf(k)}(\\D|$)`).test(t)) found.add(name);
+    for (const s of roster) if (linked.has(s.name) && flat.includes(s.name)) found.add(s.name);
+    const byName = {};
+    for (const n of found) { const m = t.match(new RegExp(n + '\\s*(\\d{1,2})(?!\\d)')); if (m) byName[n] = +m[1]; }
+    if (Object.keys(byName).length) { const { main, except } = splitHours(byName); info.hours = main; info.hoursBy = except; }
+  } else {
+    const m = flat.match(/학년반(\d)학년(\d{1,2})반/);
+    if (m && +m[1] === prev.grade) {
+      info.prevCls = +m[2];
+      for (const [k, name] of Object.entries(prev.links)) if (k.startsWith(`${prev.grade}-${+m[2]}-`)) found.add(name);
+    } else if (m) info.otherGrade = true;
+    else { info.clsUnknown = true; for (const s of roster) if (linked.has(s.name) && flat.includes(s.name)) found.add(s.name); }
+  }
+  // 비고(불참 등)는 이 확인서 대상 학생에게만 적용 (다른 반 동명이인 제외)
+  for (const n of Object.keys(info.absent)) if (!found.has(n)) delete info.absent[n];
+  for (const n of Object.keys(info.absent)) found.delete(n);
+  info.matched = found;
+  return info;
 }
 /* ================= END CORE ================= */
 
@@ -675,7 +727,7 @@ $('btnStart').onclick = async () => {
           }
           // 소집단 양식: 시트 안의 확인서를 한 장씩 잘라 읽음
           if (has('소집단명')) {
-            parseGroupSheet(rows2, nice.classInfo, nice.roster).forEach(b => pageData.push({ canvas: null,
+            parseGroupSheet(rows2, nice.classInfo, nice.roster, nice.prev).forEach(b => pageData.push({ canvas: null,
               text: b.text, src: '문서', title: `${f.name} — ${sn} (${b.info.content})`, info: b.info }));
             continue;
           }
@@ -712,10 +764,17 @@ $('btnStart').onclick = async () => {
       }
       await worker.terminate();
     }
-    pageData.forEach(d => d.info = d.info || extractInfo(d.text, nice.roster, nice.classInfo));
+    pageData.forEach(d => d.info = d.info ||
+      (nice.prev ? extractPrevInfo(d.text, nice.roster, nice.prev) : extractInfo(d.text, nice.roster, nice.classInfo)));
+    if (nice.prev) {
+      // 이전 학년도: 다른 학년 확인서, 우리 반 학생이 없는 확인서는 화면에서 뺌
+      const before = pageData.length;
+      pageData = pageData.filter(d => !d.info.otherGrade && (d.info.matched.size || Object.keys(d.info.absent).length));
+      nice.prev.msg = ` 확인서 ${before}장 중 우리 반 학생이 있는 ${pageData.length}장만 표시합니다.`;
+    }
     buildCards();
     $('step2').style.display = '';
-    status('완료. 아래 2단계에서 확인·수정하세요.');
+    status('완료. 아래 2단계에서 확인·수정하세요.' + (nice.prev?.msg || ''));
   } catch (err) {
     status('오류: ' + err.message);
     $('btnStart').disabled = false;
@@ -794,7 +853,10 @@ function buildCards() {
       <label>활동내용 <input type="text" class="fC" list="dlC" value="${inf.content.replace(/"/g,'&quot;')}"></label>
       <label>장소/주관기관 <input type="text" class="fP" value="${places[0] || ''}"></label>
       <label>시간 <input type="number" class="fH" value="${inf.hours}" min="0" step="0.5"></label>
-      ${inf.hoursBy && Object.keys(inf.hoursBy).length ? `<div class="note">시간이 다른 학생(확인서 기준, 그대로 대조): ${Object.entries(inf.hoursBy).map(([n, h]) => `${n} ${h}시간`).join(', ')}</div>` : ''}
+      ${inf.prevCls ? `<div class="note">${nice.prev.grade}학년 ${inf.prevCls}반 확인서 — 그해 이 반이었던 우리 반 학생을 체크했습니다.</div>` : ''}
+      ${inf.clsUnknown ? `<div class="warn">확인서의 학년반을 읽지 못해 이름으로만 찾았습니다. 원본을 보고 빠진 학생을 체크하세요.</div>` : ''}
+      ${inf.type === '소집단' ? `<div class="note">학생 이름 옆 칸 = 학생별 시간. 비워 두면 위의 기본 시간으로 대조합니다. 원본과 다르면 고치세요.</div>`
+        : inf.hoursBy && Object.keys(inf.hoursBy).length ? `<div class="note">시간이 다른 학생(확인서 기준, 그대로 대조): ${Object.entries(inf.hoursBy).map(([n, h]) => `${n} ${h}시간`).join(', ')}</div>` : ''}
       <label>참가자 — 비고란에 불참·결석·지각·조퇴가 읽히면 자동으로 체크 해제되고 빨간색 사유가 표시됩니다. 원본의 비고란과 맞는지 확인하세요. (체크 해제 = 나이스에 없어야 정상)</label>
       <div style="margin:4px 0"><button class="sub bAll">전체 선택</button> <button class="sub bNone">전체 해제</button></div>
       <div class="roster"></div>
@@ -805,9 +867,11 @@ function buildCards() {
       // 스캔 PDF: 이름 인식이 부정확하므로 학급은 전원 체크(제외자만 해제), 소집단은 학번으로 찾은 학생만
       // 비고(불참·결석·지각·조퇴) 학생은 어느 경우든 체크 해제 + 사유 표시
       const reason = inf.absent && inf.absent[s.name];
-      const checked = !reason && (isDoc ? inf.matched.has(s.name) : (isClass || inf.matched.has(s.name)));
+      const checked = !reason && ((isDoc || inf.strict) ? inf.matched.has(s.name) : (isClass || inf.matched.has(s.name)));
+      // 소집단: 학생별 시간 칸(비우면 기본 시간) — 확인서에서 읽은 다른 시간은 미리 채움
+      const sh = inf.type === '소집단' ? ` <input type="number" class="fSH" data-name="${s.name}" value="${(inf.hoursBy || {})[s.name] ?? ''}" placeholder="기본" min="0" step="0.5" style="width:52px">` : '';
       rosterBox.insertAdjacentHTML('beforeend',
-        `<label><input type="checkbox" class="fS" data-name="${s.name}"${checked?' checked':''}>${s.no} ${s.name}${reason ? `<span class="warn">(${reason})</span>` : ''}</label>`);
+        `<label><input type="checkbox" class="fS" data-name="${s.name}"${checked?' checked':''}>${s.no} ${s.name}${reason ? `<span class="warn">(${reason})</span>` : ''}${sh}</label>`);
     });
     const hint = () => {
       const n = form.querySelectorAll('.fS:checked').length;
@@ -833,7 +897,10 @@ $('btnCompare').onclick = () => {
   const pages = [...document.querySelectorAll('.card')].map((card, i) => ({
     excluded: card.querySelector('.fEx').checked,
     absent: (pageData[i] && pageData[i].info.absent) || {},
-    hoursBy: (pageData[i] && pageData[i].info.hoursBy) || {},
+    // 학생별 시간 칸이 있으면(소집단) 그 값, 없으면 확인서에서 읽은 값
+    hoursBy: card.querySelector('.fSH')
+      ? Object.fromEntries([...card.querySelectorAll('.fSH')].filter(x => x.value !== '').map(x => [x.dataset.name, +x.value]))
+      : (pageData[i] && pageData[i].info.hoursBy) || {},
     type: card.querySelector('.fT').value,
     date: card.querySelector('.fD').value,
     content: card.querySelector('.fC').value,
